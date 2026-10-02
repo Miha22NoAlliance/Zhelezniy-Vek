@@ -191,6 +191,43 @@ def _simple_edge_cost(graph, u, edge, goal, quality_weight):
     return dist * factor
 
 
+def _aggressive_quality_edge_cost(graph, u, edge, goal, quality_weight):
+    """Агрессивный качественный поиск."""
+    dist = max(edge["dist"], 1.0)
+    factor = 1.0
+
+    score_km = edge.get("score", 0.0) / max(dist / 1000.0, 0.001)
+    exponent = max(-6.0, min(6.0, -quality_weight * score_km / 1000.0))
+    factor *= math.exp(exponent)
+
+    before = haversine((graph["nodes"][u][0], graph["nodes"][u][1]), goal)
+    v = edge["to"]
+    after = haversine((graph["nodes"][v][0], graph["nodes"][v][1]), goal)
+    progress_ratio = (before - after) / dist
+
+    if progress_ratio < 0:
+        factor *= math.exp(min(4.2, -progress_ratio * 3.8))
+    elif progress_ratio < 0.30:
+        factor *= math.exp((0.30 - progress_ratio) * 1.35)
+
+    delta = edge.get("elevation_delta_m")
+    if delta is not None:
+        factor *= 1.0 + min(0.75, max(0.0, delta) / 34.0)
+        factor *= 1.0 + min(0.16, max(0.0, -delta) / 95.0)
+
+    if edge.get("stairs"):
+        factor *= 1.30
+
+    flags = graph.get("node_flags", {}).get(str(v), {})
+    crossing_penalty = 0.0
+    if flags.get("crossing"):
+        crossing_penalty += 18.0 if flags.get("traffic_signals") else 30.0
+    if flags.get("major_crossing"):
+        crossing_penalty += 18.0
+
+    return dist * factor + crossing_penalty
+
+
 def _quality_edge_cost(edge, quality_weight):
     dist = max(edge["dist"], 1.0)
     factor = 1.0
@@ -230,6 +267,12 @@ def _weighted_path(graph, start, goal, quality_weight, mode, max_distance=None):
         for edge in graph["adj"].get(u, ()):
             if mode == "simple":
                 edge_cost = _simple_edge_cost(
+                    graph, u, edge,
+                    (graph["nodes"][goal][0], graph["nodes"][goal][1]),
+                    quality_weight,
+                )
+            elif mode == "aggressive":
+                edge_cost = _aggressive_quality_edge_cost(
                     graph, u, edge,
                     (graph["nodes"][goal][0], graph["nodes"][goal][1]),
                     quality_weight,
