@@ -9,6 +9,11 @@
 <h1>WalkRoute</h1>
 <div class="sub">Собственный алгоритм пешеходной маршрутизации</div>
 <div id="status" class="status">Загрузка локальных данных…</div>
+<div class="mode-row"><label for="routeMode">Режим маршрута</label>
+<select id="routeMode">
+<option value="quality">Качественный маршрут</option>
+<option value="simple">Упрощённый маршрут — прямее</option>
+</select></div>
 <div class="row"><label>Максимальный объезд</label><b id="detourValue">135%</b></div>
 <input id="detour" type="range" min="100" max="180" value="135">
 <div class="buttons"><button id="build" disabled>Построить маршрут</button><button id="clear">Сбросить</button></div>
@@ -18,6 +23,8 @@
 <div><span>Баллы</span><strong id="score">—</strong></div>
 <div><span>Баллы/км</span><strong id="scoreKm">—</strong></div>
 <div><span>Предел объезда</span><strong id="limit">—</strong></div>
+<div><span>Подъём / спуск</span><strong id="elevation">—</strong></div>
+<div><span>Лестницы</span><strong id="stairs">—</strong></div>
 <h2>Вклад критериев</h2><div id="criteria"></div>
 </section>
 <div class="footer">OSM PBF · полностью локальная карта · собственный поиск пути</div>
