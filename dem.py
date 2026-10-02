@@ -377,7 +377,7 @@ class GeoTiffDEM:
             if strip >= len(self.block_offsets):
                 return None
             block_rows = min(self.rows_per_strip, self.height - strip * self.rows_per_strip)
-            values = self._decode_block(strip, self.width, self.rows_per_strip)
+            values = self._decode_block(strip, self.width, block_rows)
             x = col
             y = row - strip * self.rows_per_strip
             if y >= block_rows:
