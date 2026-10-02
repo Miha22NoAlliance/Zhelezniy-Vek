@@ -229,15 +229,17 @@ async function buildRoute(){
     $('selectedDetour').textContent=(data.selected_detour_pct||Math.round($('detour').value))+'%';
     $('limit').textContent=(data.max_distance_m/1000).toFixed(2)+' км';
     $('elevation').textContent=data.ascent_m.toFixed(0)+' м / '+data.descent_m.toFixed(0)+' м';
-    $('stairs').textContent=data.stairs_count.toLocaleString('ru-RU')+
-      (data.crossings_count!=null?' · переходов: '+data.crossings_count.toLocaleString('ru-RU'):'');
+    $('stairs').textContent=data.stairs_count.toLocaleString('ru-RU');
+    $('crossings').textContent=(data.crossings_count??0).toLocaleString('ru-RU');
     $('criteria').innerHTML=Object.entries(data.criteria||{}).map(([key,value])=>
       '<div class="crit"><span class="name">'+(labels[key]||key)+'</span><span class="'+(value<0?'minus':'plus')+'">'+
       (value>=0?'+':'')+value.toFixed(1)+'</span></div>').join('');
     $('result').classList.remove('hidden');
     const modeName=data.mode==='simple'?'Упрощённый маршрут':
       data.mode==='aggressive'?'Качественный — агрессивный':'Качественный маршрут';
-    const autoText=data.automatic?' · автоматический выбор по баллам/км':'';
+    const autoText=data.automatic
+      ? data.mode==='aggressive'?' · автоматический агрессивный выбор':' · автоматический выбор по баллам/км'
+      : '';
     $('status').textContent=modeName+' построен'+autoText+
       ' · объезд '+data.selected_detour_pct+'% · обработано узлов: '+
       data.expanded_labels.toLocaleString('ru-RU');
