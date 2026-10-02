@@ -211,7 +211,7 @@ def _quality_edge_cost(edge, quality_weight):
     return dist * factor * math.exp(exponent)
 
 
-def _weighted_path(graph, start, goal, quality_weight, mode):
+def _weighted_path(graph, start, goal, quality_weight, mode, max_distance=None):
     q = [(0.0, 0.0, start)]
     best = {start: 0.0}
     distance = {start: 0.0}
@@ -239,6 +239,8 @@ def _weighted_path(graph, start, goal, quality_weight, mode):
 
             v = edge["to"]
             nd = dist_so_far + edge["dist"]
+            if max_distance is not None and nd > max_distance + 1e-6:
+                continue
             nc = cost + edge_cost
             if nc < best.get(v, float("inf")) - 1e-9:
                 best[v] = nc
@@ -260,7 +262,7 @@ def _weighted_path(graph, start, goal, quality_weight, mode):
 
 
 def _route_candidate(graph, start, goal, max_distance, quality_weight, mode):
-    result = _weighted_path(graph, start, goal, quality_weight, mode)
+    result = _weighted_path(graph, start, goal, quality_weight, mode, max_distance)
     if result is None:
         return None
 
