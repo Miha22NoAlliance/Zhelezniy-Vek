@@ -450,7 +450,7 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
         for a,b in zip(refs,refs[1:]):
             sa,sb=str(a),str(b)
             if sa not in nodes or sb not in nodes: continue
-            dist=haversine(tuple(nodes[sa]),tuple(nodes[sb]))
+            dist=haversine((nodes[sa][0],nodes[sa][1]),(nodes[sb][0],nodes[sb][1]))
             if dist<1: continue
             mid=((nodes[sa][0]+nodes[sb][0])/2,(nodes[sa][1]+nodes[sb][1])/2)
             crit=rate(tags,weights,_context(mid,areas,aidx))
