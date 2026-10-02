@@ -3,7 +3,11 @@ body{display:flex;background:#111;color:#eee;overflow:hidden}
 .panel{width:330px;box-sizing:border-box;padding:20px;background:#191919;border-right:1px solid #333;overflow:auto}
 h1{margin:0;font-size:28px}.sub{color:#999;margin:4px 0 18px;line-height:1.35}
 .status{padding:10px 12px;border-radius:8px;background:#252525;font-size:13px;line-height:1.4;margin-bottom:18px}
-.row{display:flex;justify-content:space-between;margin-bottom:8px}input[type=range]{width:100%}
+.row{display:flex;justify-content:space-between;margin-bottom:8px}
+.mode-row{display:flex;flex-direction:column;gap:6px;margin:4px 0 12px}
+.mode-row label{color:#aaa;font-size:13px}
+#routeMode{width:100%;box-sizing:border-box;border:1px solid #3a3a3a;border-radius:8px;padding:9px 10px;background:#252525;color:#eee;font:inherit}
+input[type=range]{width:100%}
 .buttons{display:flex;gap:8px;margin-top:14px}button{flex:1;border:0;border-radius:8px;padding:11px;cursor:pointer;font-weight:600}
 #build{background:#e8e8e8;color:#111}#clear{background:#303030;color:#eee}
 button:disabled{opacity:.45;cursor:default}.hint{color:#aaa;font-size:13px;line-height:1.4;margin:12px 0 18px}
