@@ -200,6 +200,18 @@ def _aggressive_quality_edge_cost(graph, u, edge, goal, quality_weight):
     exponent = max(-6.0, min(6.0, -quality_weight * score_km / 1000.0))
     factor *= math.exp(exponent)
 
+    # Дополнительный явный приоритет местам, ради которых и нужен
+    # качественный маршрут: парки, зелёные зоны, набережные и пешеходные улицы.
+    criteria = edge.get("criteria", {})
+    place_bonus = sum(criteria.get(k, 0.0) for k in (
+        "park", "forest", "waterfront", "green_open", "garden",
+        "natural_green", "pedestrian_street"
+    ))
+    if place_bonus > 0:
+        factor *= math.exp(-min(1.4, place_bonus / 20.0))
+    if edge.get("highway") == "pedestrian":
+        factor *= 0.78
+
     before = haversine((graph["nodes"][u][0], graph["nodes"][u][1]), goal)
     v = edge["to"]
     after = haversine((graph["nodes"][v][0], graph["nodes"][v][1]), goal)
@@ -426,9 +438,7 @@ def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
             "fallback": True,
         }
 
-    # In automatic mode we deliberately choose the best route for this
-    # distance budget by score per kilometre. This is independent of whether
-    # the underlying route style is quality-oriented or simplified.
+    # Автоматически перебираем несколько весов качества в пределах бюджета.
     if automatic:
         if mode == "aggressive":
             return max(
