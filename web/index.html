@@ -9,12 +9,13 @@
 <h1>WalkRoute</h1>
 <div class="sub">Собственный алгоритм пешеходной маршрутизации</div>
 <div id="status" class="status">Загрузка локальных данных…</div>
+<label class="auto-row"><input id="autoDetour" type="checkbox" checked> Автоматически подобрать объезд 110–180%</label>
 <div class="mode-row"><label for="routeMode">Режим маршрута</label>
 <select id="routeMode">
 <option value="quality">Качественный маршрут</option>
 <option value="simple">Упрощённый маршрут — прямее</option>
 </select></div>
-<div class="row"><label>Максимальный объезд</label><b id="detourValue">135%</b></div>
+<div class="row"><label>Максимальный объезд</label><b id="detourValue">авто</b></div>
 <input id="detour" type="range" min="100" max="180" value="135">
 <div class="buttons"><button id="build" disabled>Построить маршрут</button><button id="clear">Сбросить</button></div>
 <div class="hint">Клик по карте: старт → финиш. Колесо — масштаб, зажатая кнопка мыши — перемещение.</div>
@@ -22,6 +23,7 @@
 <div><span>Длина</span><strong id="distance">—</strong></div>
 <div><span>Баллы</span><strong id="score">—</strong></div>
 <div><span>Баллы/км</span><strong id="scoreKm">—</strong></div>
+<div><span>Выбранный объезд</span><strong id="selectedDetour">—</strong></div>
 <div><span>Предел объезда</span><strong id="limit">—</strong></div>
 <div><span>Подъём / спуск</span><strong id="elevation">—</strong></div>
 <div><span>Лестницы</span><strong id="stairs">—</strong></div>
