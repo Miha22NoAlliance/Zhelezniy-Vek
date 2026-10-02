@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -84,8 +85,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, find_route(graph, (slat, slon), (glat, glon), detour))
             except KeyError:
                 self._send(400, {"error": "Не переданы координаты старта или финиша"})
-            except Exception as exc:
+            except ValueError as exc:
                 self._send(400, {"error": str(exc)})
+            except Exception as exc:
+                print("INTERNAL ROUTE ERROR:")
+                traceback.print_exc()
+                self._send(500, {"error": f"Внутренняя ошибка сервера: {exc}"})
             return
 
         if parsed.path == "/api/reload":
@@ -132,7 +137,9 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     print("WalkRoute Demo — полностью офлайн")
-    print("Build: offline-pbf-v4")
+    print("Build: offline-pbf-v5")
+    print(f"Server: {Path(__file__).resolve()}")
+    print(f"OSM module: {Path(__import__('osm').__file__).resolve()}")
     print(f"PBF: data/{PBF_FILENAME}")
     print("http://127.0.0.1:8765")
     print("Граф и локальная карта будут построены из PBF при первом обращении.")
