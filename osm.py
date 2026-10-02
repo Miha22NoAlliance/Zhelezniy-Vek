@@ -10,7 +10,7 @@ from routing import haversine
 
 LIPETSK_BBOX = (52.5320, 39.4596, 52.6457, 39.7153)
 PBF_FILENAME = "planet_39.4596,52.532_39.7153,52.6457.osm.pbf"
-GRAPH_SCHEMA = 4
+GRAPH_SCHEMA = 5
 EXCLUDE = {"motorway", "motorway_link", "construction", "proposed", "raceway"}
 GRID_LAT, GRID_LON = 0.01, 0.015
 
@@ -402,7 +402,16 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
     for _,refs,_ in roads:
         used_nodes.update(refs)
 
-    nodes={str(nid):[node_map[nid][0],node_map[nid][1]] for nid in used_nodes if nid in node_map}
+    nodes={}
+    for nid in used_nodes:
+        if nid not in node_map:
+            continue
+        lat, lon = node_map[nid]
+        ele = None
+        raw_ele = node_tags.get(nid, {}).get("ele")
+        if raw_ele is not None:
+            ele = num(str(raw_ele).replace(",", "."))
+        nodes[str(nid)] = [lat, lon, ele] if ele is not None else [lat, lon]
     map_roads=[]
     for _,refs,tags in roads:
         g=_geometry(node_map,refs)
@@ -447,8 +456,18 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
             crit=rate(tags,weights,_context(mid,areas,aidx))
             contrib={k:v*(dist/1000.0) for k,v in crit.items()}
             score=sum(contrib.values())
-            edge={"to":sb,"dist":dist,"score":score,"criteria":contrib}
-            reverse={"to":sa,"dist":dist,"score":score,"criteria":contrib}
+            elevation_a = nodes[sa][2] if len(nodes[sa]) >= 3 and nodes[sa][2] is not None else None
+            elevation_b = nodes[sb][2] if len(nodes[sb]) >= 3 and nodes[sb][2] is not None else None
+            elevation_delta = (elevation_b - elevation_a) if elevation_a is not None and elevation_b is not None else None
+            incline = num(str(tags.get("incline", "")).replace("%", "").replace(",", "."))
+            edge_meta = {
+                "highway": tags.get("highway", ""),
+                "stairs": tags.get("highway") == "steps",
+                "elevation_delta_m": round(elevation_delta, 2) if elevation_delta is not None else None,
+                "incline_pct": round(incline, 2) if incline else None,
+            }
+            edge={"to":sb,"dist":dist,"score":score,"criteria":contrib,**edge_meta}
+            reverse={"to":sa,"dist":dist,"score":score,"criteria":contrib,**edge_meta}
             # Для пешеходного маршрута motor-vehicle oneway не является запретом
             # на обратное движение, поэтому граф строим двунаправленным.
             adj[sa].append(edge);adj[sb].append(reverse);edge_count+=2
