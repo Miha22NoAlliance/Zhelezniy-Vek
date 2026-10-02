@@ -11,7 +11,7 @@ from routing import haversine
 
 LIPETSK_BBOX = (52.5320, 39.4596, 52.6457, 39.7153)
 PBF_FILENAME = "planet_39.4596,52.532_39.7153,52.6457.osm.pbf"
-GRAPH_SCHEMA = 7
+GRAPH_SCHEMA = 8
 EXCLUDE = {"motorway", "motorway_link", "construction", "proposed", "raceway"}
 GRID_LAT, GRID_LON = 0.01, 0.015
 
@@ -405,12 +405,20 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
         used_nodes.update(refs)
 
     nodes={}
+    node_flags={}
     for nid in used_nodes:
         if nid not in node_map:
             continue
         lat, lon = node_map[nid]
+        tags = node_tags.get(nid, {})
+        if tags.get("highway") == "crossing" or tags.get("railway") == "level_crossing" or tags.get("highway") == "traffic_signals":
+            node_flags[str(nid)] = {
+                "crossing": tags.get("highway") == "crossing" or tags.get("railway") == "level_crossing",
+                "traffic_signals": tags.get("highway") == "traffic_signals",
+                "major_crossing": tags.get("crossing") == "major" or tags.get("crossing:road") == "major",
+            }
         ele = None
-        raw_ele = node_tags.get(nid, {}).get("ele")
+        raw_ele = tags.get("ele")
         if raw_ele is not None:
             ele = num(str(raw_ele).replace(",", "."))
         if ele is None and dem is not None:
@@ -497,7 +505,7 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
             # на обратное движение, поэтому граф строим двунаправленным.
             adj[sa].append(edge);adj[sb].append(reverse);edge_count+=2
 
-    graph={"nodes":nodes,"adj":adj,"meta":{
+    graph={"nodes":nodes,"node_flags":node_flags,"adj":adj,"meta":{
         "schema":GRAPH_SCHEMA,"bbox":list(LIPETSK_BBOX),"nodes":len(nodes),"edges":edge_count,
         "source":"OpenStreetMap Protocolbuffer PBF (local file)","pbf":pbf_path.name,
         "elevation":"Copernicus DEM" if dem is not None else "OSM ele tags only",
