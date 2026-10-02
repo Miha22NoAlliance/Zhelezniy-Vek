@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import heapq
 import math
-from collections import defaultdict
+from collections import defaultdict, deque
 
-BUCKET_M = 75.0
-MAX_LABELS_PER_NODE = 24
-MAX_TOTAL_LABELS = 120_000
+MAX_LABELS_PER_NODE = 48
+MAX_TOTAL_LABELS = 300_000
+_COMPONENT_CACHE = {}
 
 
 def haversine(a, b):
@@ -18,9 +18,27 @@ def haversine(a, b):
 
 
 def nearest_node(graph, point):
+    key = id(graph)
+    allowed = _COMPONENT_CACHE.get(key)
+    if allowed is None:
+        start = max(graph["adj"], key=lambda n: len(graph["adj"].get(n, [])), default=None)
+        allowed = set()
+        if start is not None:
+            q = deque([start])
+            allowed.add(start)
+            while q:
+                u = q.popleft()
+                for edge in graph["adj"].get(u, []):
+                    v = edge["to"]
+                    if v not in allowed:
+                        allowed.add(v)
+                        q.append(v)
+        _COMPONENT_CACHE[key] = allowed
+
     best = None
     best_d = float("inf")
-    for node_id, node in graph["nodes"].items():
+    for node_id in allowed:
+        node = graph["nodes"][node_id]
         d = haversine(point, (node[0], node[1]))
         if d < best_d:
             best_d = d
@@ -33,21 +51,18 @@ def dominates(a, b):
 
 
 def insert_label(labels_by_node, node, dist, score, label_id):
-    bucket = int(dist // BUCKET_M)
     candidates = labels_by_node[node]
 
     for old in candidates:
-        if old[3] == bucket and old[1] >= score:
-            return False
         if dominates((old[0], old[1]), (dist, score)):
             return False
 
     candidates[:] = [old for old in candidates if not dominates((dist, score), (old[0], old[1]))]
-    candidates.append((dist, score, label_id, bucket))
+    candidates.append((dist, score, label_id))
 
     if len(candidates) > MAX_LABELS_PER_NODE:
         candidates.sort(key=lambda x: (-x[1], x[0]))
-        del candidates[MAX_LABELS_PER_NODE:]
+        candidates[:] = sorted(candidates, key=lambda x: (-x[1], x[0]))[:MAX_LABELS_PER_NODE]
     return True
 
 
