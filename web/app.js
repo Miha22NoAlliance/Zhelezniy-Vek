@@ -69,6 +69,38 @@ function drawRoad(coords,cls){
   ctx.strokeStyle=roadStroke[cls]||'#696e75';ctx.lineWidth=roadWidth[cls]||1;
   ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();
 }
+function drawPointFeature(item){
+  const p=project(item.lat,item.lon);
+  const type=item.type;
+  if(p.x<-30||p.y<-30||p.x>canvas.clientWidth+30||p.y>canvas.clientHeight+30)return;
+
+  ctx.save();
+  if(type==='crossing'){
+    ctx.fillStyle='#dce3ea';ctx.strokeStyle='#1b1f24';ctx.lineWidth=1;
+    ctx.fillRect(p.x-6,p.y-6,12,12);ctx.strokeRect(p.x-6,p.y-6,12,12);
+    ctx.strokeStyle='#555d66';ctx.lineWidth=2;
+    for(let i=-4;i<=4;i+=4){ctx.beginPath();ctx.moveTo(p.x+i-2,p.y-5);ctx.lineTo(p.x+i+2,p.y+5);ctx.stroke();}
+  }else if(type==='traffic_signals'){
+    ctx.fillStyle='#202328';ctx.strokeStyle='#111';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.roundRect(p.x-4,p.y-8,8,16,3);ctx.fill();ctx.stroke();
+    ctx.fillStyle='#d55';ctx.beginPath();ctx.arc(p.x,p.y-4,1.8,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#d8c34b';ctx.beginPath();ctx.arc(p.x,p.y,1.8,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#5cb36b';ctx.beginPath();ctx.arc(p.x,p.y+4,1.8,0,Math.PI*2);ctx.fill();
+  }else{
+    const styles={
+      bus_stop:['#4e84c4','B'],school:['#c58a42','S'],hospital:['#b95b62','H'],
+      pharmacy:['#65a56e','+'],fuel:['#b56f49','F'],cafe:['#a57e55','C'],
+      restaurant:['#b96f56','R'],bank:['#8a7eb5','₽'],parking:['#6d8ea8','P'],entrance:['#8c8f94','E']
+    };
+    const st=styles[type]||['#888','•'];
+    ctx.fillStyle=st[0];ctx.strokeStyle='#16191d';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.arc(p.x,p.y,6,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.fillStyle='#fff';ctx.font='bold 8px Segoe UI,Arial,sans-serif';
+    ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(st[1],p.x,p.y+.4);
+  }
+  ctx.restore();
+}
+
 function drawMarker(lat,lon,fill,letter){
   const p=project(lat,lon);ctx.beginPath();ctx.arc(p.x,p.y,8,0,Math.PI*2);
   ctx.fillStyle=fill;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle='#15171a';ctx.stroke();
@@ -86,6 +118,12 @@ function draw(){
       green:['#202d23','#394b3d'],garden:['#263329','#435848'],industrial:['#2b2925','#504b44']}[area.kind]||['#202020','#333'];
     ctx.fillStyle=s[0];ctx.strokeStyle=s[1];ctx.lineWidth=.8;drawPolygon(area.coords);
   }
+
+  if(view.pixelsPerMeter > .08){
+    ctx.fillStyle='#25272a';ctx.strokeStyle='#3b3e43';ctx.lineWidth=.45;
+    for(const building of mapData.buildings||[])drawPolygon(building.coords);
+  }
+
   const order={path:1,track:1,footway:1,cycleway:1,steps:1,service:2,residential:3,living_street:3,
     pedestrian:3,tertiary:4,secondary:5,primary:6,trunk:7};
   for(const road of [...(mapData.roads||[])].sort((a,b)=>(order[a.class]||0)-(order[b.class]||0)))drawRoad(road.coords,road.class);
@@ -95,6 +133,10 @@ function draw(){
     ctx.strokeStyle='#f0f2f4';ctx.lineWidth=5;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();
     ctx.strokeStyle='#9aa0a8';ctx.lineWidth=2;ctx.stroke();
   }
+  if(view.pixelsPerMeter > .22){
+    for(const item of mapData.points||[])drawPointFeature(item);
+  }
+
   if(start)drawMarker(start[0],start[1],'#f5f5f5','С');
   if(goal)drawMarker(goal[0],goal[1],'#9da3ab','Ф');
   ctx.fillStyle='rgba(20,22,25,.85)';ctx.fillRect(12,12,190,30);
@@ -150,7 +192,7 @@ async function buildRoute(){
     $('distance').textContent=(data.distance_m/1000).toFixed(2)+' км';
     $('score').textContent=data.score.toFixed(1);$('scoreKm').textContent=data.score_per_km.toFixed(1);
     $('limit').textContent=(data.max_distance_m/1000).toFixed(2)+' км';
-    $('criteria').innerHTML=Object.entries(data.criteria).map(([key,value])=>
+    $('criteria').innerHTML=Object.entries(data.criteria||{}).map(([key,value])=>
       '<div class="crit"><span class="name">'+(labels[key]||key)+'</span><span class="'+(value<0?'minus':'plus')+'">'+
       (value>=0?'+':'')+value.toFixed(1)+'</span></div>').join('');
     $('result').classList.remove('hidden');
@@ -166,7 +208,7 @@ async function init(){
     if(!r.ok)throw new Error(data.error||'Не удалось загрузить локальные данные');
     mapData=data;fitBounds(mapData.bbox,28);
     const mr=await fetch('/api/graph',{cache:'no-store'});graphMeta=await mr.json();
-    $('status').textContent='Локальная карта готова · дорог: '+mapData.roads.length.toLocaleString('ru-RU');
+    $('status').textContent='Локальная карта готова · дорог: '+mapData.roads.length.toLocaleString('ru-RU')+' · зданий: '+(mapData.buildings||[]).length.toLocaleString('ru-RU');
   }catch(e){$('status').textContent='Ошибка: '+e.message;}
 }
 init();
