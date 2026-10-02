@@ -46,27 +46,25 @@ map.on('click', e => {
     startMarker = L.marker(start).addTo(map).bindTooltip('Старт', {permanent:true, className:'marker-label', offset:[0,-18]});
     goalMarker = routeLine = null;
   }
-  $('build').disabled = !(start && goal && graphMeta);
-  $('status').textContent = start && goal ? 'Готово к построению маршрута' : 'Теперь выберите финиш';
+  $('build').disabled = !(start && goal);
+  $('status').textContent = start && goal
+    ? (graphMeta ? 'Готово к построению маршрута' : 'Готово. При построении будет загружен граф Липецка')
+    : 'Теперь выберите финиш';
 });
 
 async function init() {
-  try {
-    const r = await fetch('/api/graph');
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Ошибка загрузки');
-    graphMeta = data;
-    $('status').textContent = `Граф загружен: ${data.nodes.toLocaleString('ru-RU')} узлов, ${data.edges.toLocaleString('ru-RU')} рёбер`;
-    $('build').disabled = false;
-  } catch (e) {
-    $('status').textContent = 'Ошибка: ' + e.message;
-  }
+  // Не загружаем весь граф при открытии страницы.
+  // Первый вызов /api/route сам подгрузит/построит граф.
+  $('build').disabled = true;
+  $('status').textContent = 'Выберите старт и финиш на карте';
 }
 
 async function buildRoute() {
   if (!start || !goal) return;
   $('build').disabled = true;
-  $('status').textContent = 'Ищу лучший маршрут по модели прогулки…';
+  $('status').textContent = graphMeta
+    ? 'Ищу лучший маршрут по модели прогулки…'
+    : 'Первый запуск: загружаю и строю граф Липецка…';
 
   try {
     const params = new URLSearchParams({
@@ -77,6 +75,7 @@ async function buildRoute() {
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || 'Маршрут не найден');
 
+    graphMeta = graphMeta || {nodes: 0, edges: 0};
     routeLine?.remove();
     routeLine = L.polyline(data.coordinates, {weight:6, opacity:.9}).addTo(map);
     map.fitBounds(routeLine.getBounds(), {padding:[60,60]});
