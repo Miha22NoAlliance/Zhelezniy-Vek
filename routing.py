@@ -162,6 +162,76 @@ def _insert_label(labels, active, by_node, node, dist, score, lid):
     return True
 
 
+def _weighted_path(graph, start, goal, quality_weight):
+    q = [(0.0, 0.0, start)]
+    best = {start: 0.0}
+    distance = {start: 0.0}
+    parent = {start: None}
+    expanded = 0
+
+    while q:
+        cost, dist_so_far, u = heapq.heappop(q)
+        if cost != best.get(u):
+            continue
+
+        expanded += 1
+        if u == goal:
+            break
+
+        for edge in graph["adj"].get(u, ()):
+            edge_dist = edge["dist"]
+            edge_score = edge["score"]
+
+            # Positive edge cost keeps Dijkstra valid and prevents cycles.
+            # Higher quality_weight increasingly prefers edges with better
+            # score per metre, while negative scores are naturally penalized.
+            ratio = edge_score / max(edge_dist, 1.0)
+            exponent = max(-20.0, min(20.0, -quality_weight * ratio))
+            edge_cost = edge_dist * math.exp(exponent)
+
+            new_dist = dist_so_far + edge_dist
+            new_cost = cost + edge_cost
+            v = edge["to"]
+
+            if new_cost < best.get(v, float("inf")) - 1e-9:
+                best[v] = new_cost
+                distance[v] = new_dist
+                parent[v] = u
+                heapq.heappush(q, (new_cost, new_dist, v))
+
+    if goal not in distance:
+        return None
+
+    node_ids = []
+    u = goal
+    while u is not None:
+        node_ids.append(u)
+        u = parent[u]
+    node_ids.reverse()
+
+    return node_ids, distance[goal], expanded
+
+
+def _route_candidate(graph, start, goal, max_distance, quality_weight):
+    result = _weighted_path(graph, start, goal, quality_weight)
+    if result is None:
+        return None
+
+    node_ids, distance_m, expanded = result
+    if distance_m > max_distance + 1e-6:
+        return None
+
+    score, criteria = path_score(graph, node_ids)
+    return {
+        "node_ids": node_ids,
+        "distance_m": distance_m,
+        "score": score,
+        "criteria": criteria,
+        "expanded": expanded,
+        "quality_weight": quality_weight,
+    }
+
+
 def find_route(graph, start_point, goal_point, detour_factor=1.35):
     start, goal, snap_s, snap_g = choose_endpoints(graph, start_point, goal_point)
     shortest = shortest_path(graph, start, goal)
@@ -175,80 +245,70 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35):
     if detour_factor <= 1.00001:
         total_score, criteria = path_score(graph, shortest_ids)
         coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in shortest_ids]
-        return _result(start_point, goal_point, snap_s, snap_g, shortest_m, shortest_m,
-                       total_score, criteria, coordinates, 0, False)
+        return _result(
+            start_point, goal_point, snap_s, snap_g,
+            shortest_m, shortest_m, total_score, criteria,
+            coordinates, len(shortest_ids), False, max_distance
+        )
 
-    labels = []
-    active = set()
-    by_node = defaultdict(list)
-    queue = []
+    # Search a small, logarithmically spaced family of quality-biased paths.
+    # Every path is produced by Dijkstra with positive edge costs, so there
+    # are no repeated points and runtime is far smaller than the old
+    # multi-label search.
+    candidates = []
 
-    labels.append((start, 0.0, 0.0, None, None))
-    _insert_label(labels, active, by_node, start, 0.0, 0.0, 0)
-    heapq.heappush(queue, (-0.0, 0.0, 0))
+    weights = [0.0]
+    w = 0.25
+    while w <= 64.0:
+        weights.append(w)
+        w *= 1.65
 
-    best_goal = None
-    expanded = 0
+    detour_bias = max(0.0, detour_factor - 1.0)
+    weights += [
+        4.0 * detour_bias,
+        8.0 * detour_bias,
+        16.0 * detour_bias,
+        32.0 * detour_bias,
+    ]
 
-    while queue and len(labels) < MAX_TOTAL_LABELS:
-        neg_score, dist, lid = heapq.heappop(queue)
-        if lid not in active:
+    seen_weights = set()
+    for quality_weight in sorted(weights):
+        key = round(quality_weight, 6)
+        if key in seen_weights:
             continue
-        node, score, ldist, edge_used, parent = labels[lid]
-        if abs(ldist - dist) > 1e-6 or abs(-neg_score - score) > 1e-6:
-            continue
+        seen_weights.add(key)
 
-        expanded += 1
-        if node == goal:
-            if best_goal is None or score > labels[best_goal][1]:
-                best_goal = lid
-            continue
+        candidate = _route_candidate(
+            graph, start, goal, max_distance, quality_weight
+        )
+        if candidate is not None:
+            candidates.append(candidate)
 
-        for edge in graph["adj"].get(node, ()):
-            target = edge["to"]
-            if _contains_ancestor(labels, lid, target):
-                continue
-
-            nd = ldist + edge["dist"]
-            if nd > max_distance + 1e-6:
-                continue
-
-            ns = score + edge["score"]
-            new_id = len(labels)
-            labels.append((target, ns, nd, edge, lid))
-            if not _insert_label(labels, active, by_node, target, nd, ns, new_id):
-                labels.pop()
-                continue
-            heapq.heappush(queue, (-ns, nd, new_id))
-
-    if best_goal is None:
+    if not candidates:
         total_score, criteria = path_score(graph, shortest_ids)
         coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in shortest_ids]
-        return _result(start_point, goal_point, snap_s, snap_g, shortest_m, shortest_m,
-                       total_score, criteria, coordinates, expanded, True, max_distance)
+        return _result(
+            start_point, goal_point, snap_s, snap_g,
+            shortest_m, shortest_m, total_score, criteria,
+            coordinates, 0, True, max_distance
+        )
 
-    node_ids = []
-    cur = best_goal
-    while cur is not None:
-        node_ids.append(labels[cur][0])
-        cur = labels[cur][4]
-    node_ids.reverse()
+    # Pick the highest-scoring valid path. Prefer the shorter one only when
+    # scores are effectively identical.
+    best = max(
+        candidates,
+        key=lambda c: (c["score"], -c["distance_m"])
+    )
 
-    total_distance = labels[best_goal][2]
-    total_score = labels[best_goal][1]
-    criteria = defaultdict(float)
-    cur = best_goal
-    while cur is not None:
-        edge = labels[cur][3]
-        if edge is not None:
-            for k, v in edge["criteria"].items():
-                criteria[k] += v
-        cur = labels[cur][4]
-
+    node_ids = best["node_ids"]
     coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in node_ids]
-    return _result(start_point, goal_point, snap_s, snap_g, total_distance, shortest_m,
-                   total_score, criteria, coordinates, expanded, False, max_distance)
 
+    return _result(
+        start_point, goal_point, snap_s, snap_g,
+        best["distance_m"], shortest_m,
+        best["score"], best["criteria"], coordinates,
+        best["expanded"], False, max_distance
+    )
 
 def _result(start_point, goal_point, snap_s, snap_g, distance_m, shortest_m,
             score, criteria, coordinates, expanded, fallback, max_distance=None):
