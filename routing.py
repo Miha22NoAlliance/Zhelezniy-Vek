@@ -289,41 +289,38 @@ def _route_candidate(graph, start, goal, max_distance, quality_weight, mode):
     }
 
 
-def find_route(graph, start_point, goal_point, detour_factor=1.35, mode="quality"):
-    mode = "simple" if str(mode).lower() in {"simple", "simplified"} else "quality"
+AUTO_DETOURS = tuple(round(x / 100.0, 2) for x in range(110, 181, 10))
 
-    start, goal, snap_s, snap_g = choose_endpoints(graph, start_point, goal_point)
-    shortest = shortest_path(graph, start, goal)
-    if shortest is None:
-        raise ValueError("Между выбранными точками нет пешеходного пути")
 
-    shortest_ids, shortest_m = shortest
-    detour_factor = max(1.0, min(float(detour_factor), 1.8))
-    max_distance = shortest_m * detour_factor
-
-    if detour_factor <= 1.00001:
-        total_score, criteria, ascent, descent, stairs = path_score(graph, shortest_ids)
-        coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in shortest_ids]
-        return _result(
-            start_point, goal_point, snap_s, snap_g,
-            shortest_m, shortest_m, total_score, criteria,
-            coordinates, len(shortest_ids), False, max_distance,
-            mode, ascent, descent, stairs
-        )
-
+def _search_weights(mode, automatic):
     if mode == "simple":
-        search_weights = [0.0, 1.0, 2.5, 5.0, 9.0, 15.0, 24.0]
-    else:
-        # Более агрессивно исследуем хорошие альтернативы, но каждая серия
-        # остаётся обычным Dijkstra и не взрывается сотнями тысяч меток.
-        search_weights = [0.0, 4.0, 10.0, 20.0, 40.0, 80.0, 140.0, 220.0, 340.0]
+        if automatic:
+            return [0.0, 3.0, 8.0, 16.0, 24.0]
+        return [0.0, 1.0, 2.5, 5.0, 9.0, 15.0, 24.0]
+    if automatic:
+        return [0.0, 8.0, 24.0, 80.0, 220.0, 340.0]
+    return [0.0, 4.0, 10.0, 20.0, 40.0, 80.0, 140.0, 220.0, 340.0]
+
+
+def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
+                      max_distance, mode, automatic=False):
+    if max_distance <= shortest_m + 1e-6:
+        score, criteria, ascent, descent, stairs = path_score(graph, shortest_ids)
+        return {
+            "node_ids": shortest_ids,
+            "distance_m": shortest_m,
+            "score": score,
+            "criteria": criteria,
+            "expanded": 0,
+            "ascent": ascent,
+            "descent": descent,
+            "stairs": stairs,
+            "simple_cost": shortest_m,
+            "fallback": False,
+        }
 
     candidates = []
-    seen = set()
-    for quality_weight in search_weights:
-        if quality_weight in seen:
-            continue
-        seen.add(quality_weight)
+    for quality_weight in _search_weights(mode, automatic):
         candidate = _route_candidate(
             graph, start, goal, max_distance,
             quality_weight, mode
@@ -332,42 +329,128 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35, mode="quality
             candidates.append(candidate)
 
     if not candidates:
-        total_score, criteria, ascent, descent, stairs = path_score(graph, shortest_ids)
-        coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in shortest_ids]
-        return _result(
-            start_point, goal_point, snap_s, snap_g,
-            shortest_m, shortest_m, total_score, criteria,
-            coordinates, 0, True, max_distance,
-            mode, ascent, descent, stairs
+        score, criteria, ascent, descent, stairs = path_score(graph, shortest_ids)
+        return {
+            "node_ids": shortest_ids,
+            "distance_m": shortest_m,
+            "score": score,
+            "criteria": criteria,
+            "expanded": 0,
+            "ascent": ascent,
+            "descent": descent,
+            "stairs": stairs,
+            "simple_cost": shortest_m,
+            "fallback": True,
+        }
+
+    # In automatic mode we deliberately choose the best route for this
+    # distance budget by score per kilometre. This is independent of whether
+    # the underlying route style is quality-oriented or simplified.
+    if automatic:
+        return max(
+            candidates,
+            key=lambda c: (
+                c["score"] / max(c["distance_m"] / 1000.0, 0.001),
+                c["score"],
+                -c["distance_m"],
+            ),
         )
 
     if mode == "simple":
-        best = min(
+        return min(
             candidates,
             key=lambda c: (c["simple_cost"], -c["score"], c["distance_m"])
         )
-    else:
-        best = max(
-            candidates,
-            key=lambda c: (c["score"], -c["distance_m"])
+
+    return max(candidates, key=lambda c: (c["score"], -c["distance_m"]))
+
+
+def find_route(graph, start_point, goal_point, detour_factor=1.35,
+               mode="quality", automatic=False):
+    mode = "simple" if str(mode).lower() in {"simple", "simplified"} else "quality"
+
+    start, goal, snap_s, snap_g = choose_endpoints(graph, start_point, goal_point)
+    shortest = shortest_path(graph, start, goal)
+    if shortest is None:
+        raise ValueError("Между выбранными точками нет пешеходного пути")
+
+    shortest_ids, shortest_m = shortest
+
+    if automatic:
+        selected = None
+        tested = []
+
+        for factor in AUTO_DETOURS:
+            max_distance = shortest_m * factor
+            candidate = _solve_for_budget(
+                graph, start, goal, shortest_ids, shortest_m,
+                max_distance, mode, automatic=True
+            )
+            tested.append({
+                "detour_pct": round(factor * 100),
+                "distance_m": round(candidate["distance_m"], 1),
+                "score": round(candidate["score"], 2),
+                "score_per_km": round(
+                    candidate["score"] / max(candidate["distance_m"] / 1000.0, 0.001), 2
+                ),
+                "fallback": bool(candidate["fallback"]),
+            })
+
+            current_ratio = candidate["score"] / max(candidate["distance_m"] / 1000.0, 0.001)
+            if selected is None:
+                selected = (current_ratio, candidate, factor)
+            else:
+                old_ratio = selected[0]
+                if (current_ratio > old_ratio + 1e-9 or
+                    (abs(current_ratio - old_ratio) <= 1e-9 and
+                     candidate["score"] > selected[1]["score"])):
+                    selected = (current_ratio, candidate, factor)
+
+        if selected is None:
+            raise ValueError("Не удалось подобрать автоматический маршрут")
+
+        _, best, selected_factor = selected
+        node_ids = best["node_ids"]
+        coordinates = [
+            [graph["nodes"][nid][0], graph["nodes"][nid][1]]
+            for nid in node_ids
+        ]
+        return _result(
+            start_point, goal_point, snap_s, snap_g,
+            best["distance_m"], shortest_m,
+            best["score"], best["criteria"], coordinates,
+            best["expanded"], best["fallback"],
+            shortest_m * selected_factor,
+            mode, best["ascent"], best["descent"], best["stairs"],
+            selected_factor, True, tested
         )
 
+    detour_factor = max(1.0, min(float(detour_factor), 1.8))
+    max_distance = shortest_m * detour_factor
+    best = _solve_for_budget(
+        graph, start, goal, shortest_ids, shortest_m,
+        max_distance, mode, automatic=False
+    )
+
     node_ids = best["node_ids"]
-    coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in node_ids]
+    coordinates = [
+        [graph["nodes"][nid][0], graph["nodes"][nid][1]]
+        for nid in node_ids
+    ]
 
     return _result(
         start_point, goal_point, snap_s, snap_g,
         best["distance_m"], shortest_m,
         best["score"], best["criteria"], coordinates,
-        best["expanded"], False, max_distance,
-        mode, best["ascent"], best["descent"], best["stairs"]
+        best["expanded"], best["fallback"], max_distance,
+        mode, best["ascent"], best["descent"], best["stairs"],
+        detour_factor, False, None
     )
-
 
 def _result(start_point, goal_point, snap_s, snap_g, distance_m, shortest_m,
             score, criteria, coordinates, expanded, fallback,
             max_distance=None, mode="quality", ascent=0.0, descent=0.0,
-            stairs=0):
+            stairs=0, selected_detour=1.0, automatic=False, tested_detours=None):
     if max_distance is None:
         max_distance = distance_m
     return {
@@ -389,6 +472,9 @@ def _result(start_point, goal_point, snap_s, snap_g, distance_m, shortest_m,
         "ascent_m": round(ascent, 1),
         "descent_m": round(descent, 1),
         "stairs_count": stairs,
+        "selected_detour_pct": round(selected_detour * 100),
+        "automatic": automatic,
+        "tested_detours": tested_detours,
         "fallback": fallback,
         "repeated_points": len(coordinates) - len({
             (round(p[0], 7), round(p[1], 7)) for p in coordinates
