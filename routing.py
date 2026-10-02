@@ -297,10 +297,10 @@ AUTO_DETOURS = tuple(round(x / 100.0, 2) for x in range(110, 181, 10))
 def _search_weights(mode, automatic):
     if mode == "simple":
         if automatic:
-            return [0.0, 3.0, 8.0, 16.0, 24.0]
+            return [0.0, 8.0, 18.0, 24.0]
         return [0.0, 1.0, 2.5, 5.0, 9.0, 15.0, 24.0]
     if automatic:
-        return [0.0, 8.0, 24.0, 80.0, 220.0, 340.0]
+        return [0.0, 24.0, 80.0, 220.0]
     return [0.0, 4.0, 10.0, 20.0, 40.0, 80.0, 140.0, 220.0, 340.0]
 
 
