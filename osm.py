@@ -466,8 +466,20 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
             elevation_a = nodes[sa][2] if len(nodes[sa]) >= 3 and nodes[sa][2] is not None else None
             elevation_b = nodes[sb][2] if len(nodes[sb]) >= 3 and nodes[sb][2] is not None else None
             elevation_delta = (elevation_b - elevation_a) if elevation_a is not None and elevation_b is not None else None
+
+            if elevation_delta is not None:
+                dem_slope = abs(elevation_delta) / max(dist, 1.0) * 100.0
+                if dem_slope >= 8.0 and "very_steep" not in contrib:
+                    contrib["very_steep"] = weights["very_steep"] * (dist / 1000.0)
+                elif dem_slope >= 4.0 and "steep" not in contrib:
+                    contrib["steep"] = weights["steep"] * (dist / 1000.0)
+
             incline = num(str(tags.get("incline", "")).replace("%", "").replace(",", "."))
+            score=sum(contrib.values())
             edge_meta = {
+                "elevation_grade_pct": round(
+                    (elevation_delta / max(dist, 1.0)) * 100.0, 2
+                ) if elevation_delta is not None else None,
                 "highway": tags.get("highway", ""),
                 "stairs": tags.get("highway") == "steps",
                 "elevation_delta_m": round(elevation_delta, 2) if elevation_delta is not None else None,
