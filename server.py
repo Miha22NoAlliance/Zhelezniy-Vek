@@ -142,7 +142,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     print("WalkRoute Demo — полностью офлайн")
-    print("Build: offline-pbf-v8")
+    print("Build: offline-pbf-v9")
     print(f"Server: {Path(__file__).resolve()}")
     print(f"OSM module: {Path(__import__('osm').__file__).resolve()}")
     print(f"PBF: data/{PBF_FILENAME}")
