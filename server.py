@@ -79,8 +79,12 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 graph, _ = ensure_data()
                 q = parse_qs(parsed.query)
-                slat = float(q["slat"][0]); slon = float(q["slon"][0])
-                glat = float(q["glat"][0]); glon = float(q["glon"][0])
+                try:
+                    slat = float(q["slat"][0]); slon = float(q["slon"][0])
+                    glat = float(q["glat"][0]); glon = float(q["glon"][0])
+                except KeyError:
+                    self._send(400, {"error": "Не переданы координаты старта или финиша"})
+                    return
                 detour = float(q.get("detour", [1.35])[0])
                 mode = q.get("mode", ["quality"])[0]
                 automatic = q.get("auto", ["0"])[0].lower() in {"1", "true", "yes"}
@@ -88,8 +92,6 @@ class Handler(BaseHTTPRequestHandler):
                     graph, (slat, slon), (glat, glon),
                     detour, mode, automatic
                 ))
-            except KeyError:
-                self._send(400, {"error": "Не переданы координаты старта или финиша"})
             except ValueError as exc:
                 self._send(400, {"error": str(exc)})
             except Exception as exc:
@@ -142,7 +144,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     print("WalkRoute Demo — полностью офлайн")
-    print("Build: offline-pbf-v10")
+    print("Build: offline-pbf-v11")
     print(f"Server: {Path(__file__).resolve()}")
     print(f"OSM module: {Path(__import__('osm').__file__).resolve()}")
     print(f"PBF: data/{PBF_FILENAME}")
