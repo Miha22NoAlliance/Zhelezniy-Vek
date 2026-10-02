@@ -193,9 +193,22 @@ def _simple_edge_cost(graph, u, edge, goal, quality_weight):
 
 def _quality_edge_cost(edge, quality_weight):
     dist = max(edge["dist"], 1.0)
+    factor = 1.0
+
+    # В обычном режиме высота и лестницы влияют мягче, чем в упрощённом.
+    delta = edge.get("elevation_delta_m")
+    if delta is not None:
+        uphill = max(0.0, delta)
+        downhill = max(0.0, -delta)
+        factor *= 1.0 + min(0.55, uphill / 45.0)
+        factor *= 1.0 + min(0.12, downhill / 120.0)
+
+    if edge.get("stairs"):
+        factor *= 1.18
+
     ratio = edge.get("score", 0.0) / dist
     exponent = max(-5.0, min(5.0, -quality_weight * ratio))
-    return dist * math.exp(exponent)
+    return dist * factor * math.exp(exponent)
 
 
 def _weighted_path(graph, start, goal, quality_weight, mode):
