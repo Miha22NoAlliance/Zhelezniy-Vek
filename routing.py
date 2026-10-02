@@ -504,15 +504,20 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35,
                 "fallback": bool(candidate["fallback"]),
             })
 
-            current_ratio = candidate["score"] / max(candidate["distance_m"] / 1000.0, 0.001)
-            if selected is None:
-                selected = (current_ratio, candidate, factor)
+            if mode == "aggressive":
+                current_value = _aggressive_utility(candidate, shortest_m)
             else:
-                old_ratio = selected[0]
-                if (current_ratio > old_ratio + 1e-9 or
-                    (abs(current_ratio - old_ratio) <= 1e-9 and
+                current_value = candidate["score"] / max(
+                    candidate["distance_m"] / 1000.0, 0.001
+                )
+            if selected is None:
+                selected = (current_value, candidate, factor)
+            else:
+                old_value = selected[0]
+                if (current_value > old_value + 1e-9 or
+                    (abs(current_value - old_value) <= 1e-9 and
                      candidate["score"] > selected[1]["score"])):
-                    selected = (current_ratio, candidate, factor)
+                    selected = (current_value, candidate, factor)
 
         if selected is None:
             raise ValueError("Не удалось подобрать автоматический маршрут")
