@@ -4,193 +4,83 @@ import heapq
 import math
 from collections import defaultdict, deque
 
-MAX_LABELS_PER_NODE = 48
-MAX_TOTAL_LABELS = 300_000
+MAX_LABELS_PER_NODE = 64
+MAX_TOTAL_LABELS = 500_000
 _COMPONENT_CACHE = {}
 
 
 def haversine(a, b):
-    lat1, lon1 = a; lat2, lon2 = b
-    p1 = math.radians(lat1); p2 = math.radians(lat2)
-    dp = math.radians(lat2-lat1); dl = math.radians(lon2-lon1)
-    h = math.sin(dp/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
+    lat1, lon1 = a
+    lat2, lon2 = b
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 6371000.0 * 2 * math.asin(math.sqrt(h))
 
 
-def nearest_node(graph, point):
+def _components(graph):
     key = id(graph)
-    allowed = _COMPONENT_CACHE.get(key)
-    if allowed is None:
-        start = max(graph["adj"], key=lambda n: len(graph["adj"].get(n, [])), default=None)
-        allowed = set()
-        if start is not None:
-            q = deque([start])
-            allowed.add(start)
-            while q:
-                u = q.popleft()
-                for edge in graph["adj"].get(u, []):
-                    v = edge["to"]
-                    if v not in allowed:
-                        allowed.add(v)
-                        q.append(v)
-        _COMPONENT_CACHE[key] = allowed
+    cached = _COMPONENT_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    adj = graph["adj"]
+    comp_of = {}
+    components = []
+    for start in adj:
+        if start in comp_of:
+            continue
+        cid = len(components)
+        q = deque([start])
+        comp_of[start] = cid
+        nodes = []
+        while q:
+            u = q.popleft()
+            nodes.append(u)
+            for edge in adj.get(u, ()):
+                v = edge["to"]
+                if v not in comp_of:
+                    comp_of[v] = cid
+                    q.append(v)
+        components.append(nodes)
+    _COMPONENT_CACHE[key] = (comp_of, components)
+    return comp_of, components
+
+
+def nearest_candidates(graph, point, limit=16):
+    values = []
+    for node_id, node in graph["nodes"].items():
+        values.append((haversine(point, (node[0], node[1])), node_id))
+    values.sort(key=lambda x: x[0])
+    return values[:limit]
+
+
+def choose_endpoints(graph, start_point, goal_point):
+    comp_of, _ = _components(graph)
+    starts = nearest_candidates(graph, start_point)
+    goals = nearest_candidates(graph, goal_point)
 
     best = None
-    best_d = float("inf")
-    for node_id in allowed:
-        node = graph["nodes"][node_id]
-        d = haversine(point, (node[0], node[1]))
-        if d < best_d:
-            best_d = d
-            best = node_id
-    return best, best_d
-
-
-def dominates(a, b):
-    return a[0] <= b[0] and a[1] >= b[1] and (a[0] < b[0] or a[1] > b[1])
-
-
-def insert_label(labels_by_node, node, dist, score, label_id):
-    candidates = labels_by_node[node]
-
-    for old in candidates:
-        if dominates((old[0], old[1]), (dist, score)):
-            return False
-
-    candidates[:] = [old for old in candidates if not dominates((dist, score), (old[0], old[1]))]
-    candidates.append((dist, score, label_id))
-
-    if len(candidates) > MAX_LABELS_PER_NODE:
-        candidates.sort(key=lambda x: (-x[1], x[0]))
-        candidates[:] = sorted(candidates, key=lambda x: (-x[1], x[0]))[:MAX_LABELS_PER_NODE]
-    return True
-
-
-def shortest_distance(graph, start, goal):
-    q = [(0.0, start)]
-    best = {start: 0.0}
-    while q:
-        d, u = heapq.heappop(q)
-        if d != best.get(u):
+    for sd, sn in starts:
+        sc = comp_of.get(sn)
+        if sc is None:
             continue
-        if u == goal:
-            return d
-        for edge in graph["adj"].get(u, []):
-            nd = d + edge["dist"]
-            if nd < best.get(edge["to"], float("inf")):
-                best[edge["to"]] = nd
-                heapq.heappush(q, (nd, edge["to"]))
-    return None
-
-
-def reconstruct(labels, label_id):
-    ids = []
-    while label_id is not None:
-        ids.append(labels[label_id][0])
-        label_id = labels[label_id][4]
-    return list(reversed(ids))
-
-
-def find_route(graph, start_point, goal_point, detour_factor=1.35):
-    start, snap_s = nearest_node(graph, start_point)
-    goal, snap_g = nearest_node(graph, goal_point)
-    if start is None or goal is None:
-        raise ValueError("Граф улиц ещё не загружен")
-
-    shortest = shortest_distance(graph, start, goal)
-    if shortest is None:
-        raise ValueError("Между выбранными точками нет пешеходного пути")
-
-    max_distance = shortest * max(1.0, min(detour_factor, 2.5))
-
-    # Distance is a constraint only. Objective: maximize accumulated quality score.
-    labels = []  # node, score, distance, via_edge, parent_label
-    labels_by_node = defaultdict(list)
-    queue = []
-
-    labels.append((start, 0.0, 0.0, None, None))
-    insert_label(labels_by_node, start, 0.0, 0.0, 0)
-    heapq.heappush(queue, (-0.0, 0.0, 0))
-
-    best_goal = None
-    expanded = 0
-
-    while queue and len(labels) < MAX_TOTAL_LABELS:
-        neg_score, dist, lid = heapq.heappop(queue)
-        node, score, ldist, edge_used, parent = labels[lid]
-
-        if abs(ldist - dist) > 1e-6 or abs(-neg_score - score) > 1e-6:
-            continue
-
-        expanded += 1
-        if node == goal:
-            if best_goal is None or score > labels[best_goal][1]:
-                best_goal = lid
-            continue
-
-        for edge in graph["adj"].get(node, []):
-            nd = ldist + edge["dist"]
-            if nd > max_distance:
+        for gd, gn in goals:
+            if comp_of.get(gn) != sc:
                 continue
-            ns = score + edge["score"]
-            new_id = len(labels)
+            score = sd + gd
+            if best is None or score < best[0]:
+                best = (score, sn, sd, gn, gd)
 
-            if not insert_label(labels_by_node, edge["to"], nd, ns, new_id):
-                continue
+    if best is None:
+        raise ValueError("Старт и финиш находятся в разных изолированных участках карты")
 
-            labels.append((edge["to"], ns, nd, edge, lid))
-            heapq.heappush(queue, (-ns, nd, new_id))
-
-    if best_goal is None:
-        shortest_path = shortest_distance_route(graph, start, goal)
-        if shortest_path is None:
-            raise ValueError("Не удалось построить маршрут")
-        node_ids, fallback_distance = shortest_path
-        coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in node_ids]
-        return {
-            "start": {"lat": start_point[0], "lon": start_point[1], "snap_m": round(snap_s, 1)},
-            "goal": {"lat": goal_point[0], "lon": goal_point[1], "snap_m": round(snap_g, 1)},
-            "distance_m": round(fallback_distance, 1),
-            "shortest_m": round(shortest, 1),
-            "max_distance_m": round(max_distance, 1),
-            "score": 0.0,
-            "score_per_km": 0.0,
-            "expanded_labels": expanded,
-            "coordinates": coordinates,
-            "criteria": {},
-            "fallback": True,
-        }
-
-    node_ids = reconstruct(labels, best_goal)
-    coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in node_ids]
-
-    total_score = labels[best_goal][1]
-    total_distance = labels[best_goal][2]
-
-    contributions = defaultdict(float)
-    cur = best_goal
-    while cur is not None:
-        edge = labels[cur][3]
-        if edge is not None:
-            for key, value in edge["criteria"].items():
-                contributions[key] += value
-        cur = labels[cur][4]
-
-    return {
-        "start": {"lat": start_point[0], "lon": start_point[1], "snap_m": round(snap_s, 1)},
-        "goal": {"lat": goal_point[0], "lon": goal_point[1], "snap_m": round(snap_g, 1)},
-        "distance_m": round(total_distance, 1),
-        "shortest_m": round(shortest, 1),
-        "max_distance_m": round(max_distance, 1),
-        "score": round(total_score, 2),
-        "score_per_km": round(total_score / max(total_distance / 1000.0, 0.001), 2),
-        "expanded_labels": expanded,
-        "coordinates": coordinates,
-        "criteria": {k: round(v, 2) for k, v in sorted(contributions.items(), key=lambda kv: -abs(kv[1])) if abs(v) > 0.001},
-    }
+    return best[1], best[3], best[2], best[4]
 
 
-def shortest_distance_route(graph, start, goal):
+def shortest_path(graph, start, goal):
     q = [(0.0, start)]
     best = {start: 0.0}
     parent = {start: None}
@@ -200,7 +90,7 @@ def shortest_distance_route(graph, start, goal):
             continue
         if u == goal:
             break
-        for edge in graph["adj"].get(u, []):
+        for edge in graph["adj"].get(u, ()):
             v = edge["to"]
             nd = d + edge["dist"]
             if nd < best.get(v, float("inf")):
@@ -209,9 +99,172 @@ def shortest_distance_route(graph, start, goal):
                 heapq.heappush(q, (nd, v))
     if goal not in best:
         return None
-    path = []
+    ids = []
     u = goal
     while u is not None:
-        path.append(u)
+        ids.append(u)
         u = parent[u]
-    return list(reversed(path)), best[goal]
+    return list(reversed(ids)), best[goal]
+
+
+def path_score(graph, node_ids):
+    total = 0.0
+    criteria = defaultdict(float)
+    for a, b in zip(node_ids, node_ids[1:]):
+        edge = next((e for e in graph["adj"].get(a, ()) if e["to"] == b), None)
+        if edge is None:
+            continue
+        total += edge["score"]
+        for k, v in edge["criteria"].items():
+            criteria[k] += v
+    return total, criteria
+
+
+def _contains_ancestor(labels, label_id, node_id):
+    cur = label_id
+    while cur is not None:
+        if labels[cur][0] == node_id:
+            return True
+        cur = labels[cur][4]
+    return False
+
+
+def _insert_label(labels, active, by_node, node, dist, score, lid):
+    candidates = by_node[node]
+    for old_id in candidates:
+        if old_id not in active:
+            continue
+        old = labels[old_id]
+        if old[2] <= dist and old[1] >= score and (old[2] < dist or old[1] > score):
+            return False
+
+    doomed = []
+    for old_id in candidates:
+        if old_id not in active:
+            continue
+        old = labels[old_id]
+        if dist <= old[2] and score >= old[1] and (dist < old[2] or score > old[1]):
+            doomed.append(old_id)
+
+    for old_id in doomed:
+        active.discard(old_id)
+    by_node[node] = [x for x in candidates if x in active]
+    by_node[node].append(lid)
+    active.add(lid)
+
+    if len(by_node[node]) > MAX_LABELS_PER_NODE:
+        ranked = sorted(by_node[node], key=lambda x: (-labels[x][1], labels[x][2]))
+        keep = set(ranked[:MAX_LABELS_PER_NODE])
+        for old_id in by_node[node]:
+            if old_id not in keep:
+                active.discard(old_id)
+        by_node[node] = ranked[:MAX_LABELS_PER_NODE]
+    return True
+
+
+def find_route(graph, start_point, goal_point, detour_factor=1.35):
+    start, goal, snap_s, snap_g = choose_endpoints(graph, start_point, goal_point)
+    shortest = shortest_path(graph, start, goal)
+    if shortest is None:
+        raise ValueError("Между выбранными точками нет пешеходного пути")
+
+    shortest_ids, shortest_m = shortest
+    detour_factor = max(1.0, min(float(detour_factor), 2.5))
+    max_distance = shortest_m * detour_factor
+
+    if detour_factor <= 1.00001:
+        total_score, criteria = path_score(graph, shortest_ids)
+        coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in shortest_ids]
+        return _result(start_point, goal_point, snap_s, snap_g, shortest_m, shortest_m,
+                       total_score, criteria, coordinates, 0, False)
+
+    labels = []
+    active = set()
+    by_node = defaultdict(list)
+    queue = []
+
+    labels.append((start, 0.0, 0.0, None, None))
+    _insert_label(labels, active, by_node, start, 0.0, 0.0, 0)
+    heapq.heappush(queue, (-0.0, 0.0, 0))
+
+    best_goal = None
+    expanded = 0
+
+    while queue and len(labels) < MAX_TOTAL_LABELS:
+        neg_score, dist, lid = heapq.heappop(queue)
+        if lid not in active:
+            continue
+        node, score, ldist, edge_used, parent = labels[lid]
+        if abs(ldist - dist) > 1e-6 or abs(-neg_score - score) > 1e-6:
+            continue
+
+        expanded += 1
+        if node == goal:
+            if best_goal is None or score > labels[best_goal][1]:
+                best_goal = lid
+            continue
+
+        for edge in graph["adj"].get(node, ()):
+            target = edge["to"]
+            if _contains_ancestor(labels, lid, target):
+                continue
+
+            nd = ldist + edge["dist"]
+            if nd > max_distance + 1e-6:
+                continue
+
+            ns = score + edge["score"]
+            new_id = len(labels)
+            labels.append((target, ns, nd, edge, lid))
+            if not _insert_label(labels, active, by_node, target, nd, ns, new_id):
+                labels.pop()
+                continue
+            heapq.heappush(queue, (-ns, nd, new_id))
+
+    if best_goal is None:
+        total_score, criteria = path_score(graph, shortest_ids)
+        coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in shortest_ids]
+        return _result(start_point, goal_point, snap_s, snap_g, shortest_m, shortest_m,
+                       total_score, criteria, coordinates, expanded, True)
+
+    node_ids = []
+    cur = best_goal
+    while cur is not None:
+        node_ids.append(labels[cur][0])
+        cur = labels[cur][4]
+    node_ids.reverse()
+
+    total_distance = labels[best_goal][2]
+    total_score = labels[best_goal][1]
+    criteria = defaultdict(float)
+    cur = best_goal
+    while cur is not None:
+        edge = labels[cur][3]
+        if edge is not None:
+            for k, v in edge["criteria"].items():
+                criteria[k] += v
+        cur = labels[cur][4]
+
+    coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in node_ids]
+    return _result(start_point, goal_point, snap_s, snap_g, total_distance, shortest_m,
+                   total_score, criteria, coordinates, expanded, False, max_distance)
+
+
+def _result(start_point, goal_point, snap_s, snap_g, distance_m, shortest_m,
+            score, criteria, coordinates, expanded, fallback, max_distance=None):
+    if max_distance is None:
+        max_distance = distance_m
+    return {
+        "start": {"lat": start_point[0], "lon": start_point[1], "snap_m": round(snap_s, 1)},
+        "goal": {"lat": goal_point[0], "lon": goal_point[1], "snap_m": round(snap_g, 1)},
+        "distance_m": round(distance_m, 1),
+        "shortest_m": round(shortest_m, 1),
+        "max_distance_m": round(max_distance, 1),
+        "score": round(score, 2),
+        "score_per_km": round(score / max(distance_m / 1000.0, 0.001), 2),
+        "expanded_labels": expanded,
+        "coordinates": coordinates,
+        "criteria": {k: round(v, 2) for k, v in sorted(criteria.items(), key=lambda kv: -abs(kv[1])) if abs(kv[1]) > 0.001},
+        "fallback": fallback,
+        "repeated_points": len(coordinates) - len({(round(p[0], 7), round(p[1], 7)) for p in coordinates}),
+    }
