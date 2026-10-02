@@ -176,7 +176,14 @@ canvas.addEventListener('wheel',e=>{
   const after=unproject(x,y);view.lat+=before[0]-after[0];view.lon+=before[1]-after[1];draw();
 },{passive:false});
 
-$('detour').addEventListener('input',e=>$('detourValue').textContent=e.target.value+'%');
+function updateDetourUi(){
+  const auto=$('autoDetour').checked;
+  $('detour').disabled=auto;
+  $('detourValue').textContent=auto?'авто':$('detour').value+'%';
+}
+$('detour').addEventListener('input',updateDetourUi);
+$('autoDetour').addEventListener('change',updateDetourUi);
+updateDetourUi();
 $('routeMode').addEventListener('change',e=>{
   const simple=e.target.value==='simple';
   $('status').textContent=simple
@@ -191,7 +198,8 @@ async function buildRoute(){
   try{
     const params=new URLSearchParams({
       slat:start[0],slon:start[1],glat:goal[0],glon:goal[1],
-      detour:$('detour').value/100,mode:$('routeMode').value
+      detour:$('detour').value/100,mode:$('routeMode').value,
+      auto:$('autoDetour').checked?'1':'0'
     });
     const r=await fetch('/api/route?'+params,{cache:'no-store'}),data=await r.json();
     if(!r.ok)throw new Error(data.error||'Маршрут не найден');
@@ -200,6 +208,7 @@ async function buildRoute(){
     fitBounds([Math.min(...lats),Math.min(...lons),Math.max(...lats),Math.max(...lons)],70);
     $('distance').textContent=(data.distance_m/1000).toFixed(2)+' км';
     $('score').textContent=data.score.toFixed(1);$('scoreKm').textContent=data.score_per_km.toFixed(1);
+    $('selectedDetour').textContent=(data.selected_detour_pct||Math.round($('detour').value))+'%';
     $('limit').textContent=(data.max_distance_m/1000).toFixed(2)+' км';
     $('elevation').textContent=data.ascent_m.toFixed(0)+' м / '+data.descent_m.toFixed(0)+' м';
     $('stairs').textContent=data.stairs_count.toLocaleString('ru-RU');
@@ -207,8 +216,11 @@ async function buildRoute(){
       '<div class="crit"><span class="name">'+(labels[key]||key)+'</span><span class="'+(value<0?'minus':'plus')+'">'+
       (value>=0?'+':'')+value.toFixed(1)+'</span></div>').join('');
     $('result').classList.remove('hidden');
-    $('status').textContent=(data.mode==='simple'?'Упрощённый маршрут':'Качественный маршрут')+
-      ' построен · обработано узлов: '+data.expanded_labels.toLocaleString('ru-RU');
+    const modeName=data.mode==='simple'?'Упрощённый маршрут':'Качественный маршрут';
+    const autoText=data.automatic?' · автоматический выбор по баллам/км':'';
+    $('status').textContent=modeName+' построен'+autoText+
+      ' · объезд '+data.selected_detour_pct+'% · обработано узлов: '+
+      data.expanded_labels.toLocaleString('ru-RU');
   }catch(e){$('status').textContent='Ошибка: '+e.message;}
   finally{$('build').disabled=!(start&&goal&&mapData);}
 }
