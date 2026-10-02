@@ -130,8 +130,8 @@ function draw(){
   if(routeCoordinates?.length){
     let p=project(routeCoordinates[0][0],routeCoordinates[0][1]);ctx.beginPath();ctx.moveTo(p.x,p.y);
     for(let i=1;i<routeCoordinates.length;i++){p=project(routeCoordinates[i][0],routeCoordinates[i][1]);ctx.lineTo(p.x,p.y);}
-    ctx.strokeStyle='#f0f2f4';ctx.lineWidth=5;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();
-    ctx.strokeStyle='#9aa0a8';ctx.lineWidth=2;ctx.stroke();
+    ctx.strokeStyle='#17191d';ctx.lineWidth=8;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();
+    ctx.strokeStyle='#ffad1f';ctx.lineWidth=5;ctx.stroke();
   }
   if(view.pixelsPerMeter > .22){
     for(const item of mapData.points||[])drawPointFeature(item);
@@ -177,13 +177,22 @@ canvas.addEventListener('wheel',e=>{
 },{passive:false});
 
 $('detour').addEventListener('input',e=>$('detourValue').textContent=e.target.value+'%');
+$('routeMode').addEventListener('change',e=>{
+  const simple=e.target.value==='simple';
+  $('status').textContent=simple
+    ? 'Упрощённый режим: прямее, крупнее улицы, меньше лестниц и подъёмов'
+    : 'Качественный режим: ищет более приятный путь';
+});
 $('clear').onclick=clearAll;$('build').onclick=buildRoute;window.addEventListener('resize',resize);
 
 async function buildRoute(){
   if(!start||!goal||!mapData)return;
   $('build').disabled=true;$('status').textContent='Ищу лучший маршрут по локальному графу…';
   try{
-    const params=new URLSearchParams({slat:start[0],slon:start[1],glat:goal[0],glon:goal[1],detour:$('detour').value/100});
+    const params=new URLSearchParams({
+      slat:start[0],slon:start[1],glat:goal[0],glon:goal[1],
+      detour:$('detour').value/100,mode:$('routeMode').value
+    });
     const r=await fetch('/api/route?'+params,{cache:'no-store'}),data=await r.json();
     if(!r.ok)throw new Error(data.error||'Маршрут не найден');
     routeCoordinates=data.coordinates;draw();
@@ -192,11 +201,14 @@ async function buildRoute(){
     $('distance').textContent=(data.distance_m/1000).toFixed(2)+' км';
     $('score').textContent=data.score.toFixed(1);$('scoreKm').textContent=data.score_per_km.toFixed(1);
     $('limit').textContent=(data.max_distance_m/1000).toFixed(2)+' км';
+    $('elevation').textContent=data.ascent_m.toFixed(0)+' м / '+data.descent_m.toFixed(0)+' м';
+    $('stairs').textContent=data.stairs_count.toLocaleString('ru-RU');
     $('criteria').innerHTML=Object.entries(data.criteria||{}).map(([key,value])=>
       '<div class="crit"><span class="name">'+(labels[key]||key)+'</span><span class="'+(value<0?'minus':'plus')+'">'+
       (value>=0?'+':'')+value.toFixed(1)+'</span></div>').join('');
     $('result').classList.remove('hidden');
-    $('status').textContent='Маршрут построен · обработано меток: '+data.expanded_labels.toLocaleString('ru-RU');
+    $('status').textContent=(data.mode==='simple'?'Упрощённый маршрут':'Качественный маршрут')+
+      ' построен · обработано узлов: '+data.expanded_labels.toLocaleString('ru-RU');
   }catch(e){$('status').textContent='Ошибка: '+e.message;}
   finally{$('build').disabled=!(start&&goal&&mapData);}
 }
