@@ -11,7 +11,7 @@ from routing import haversine
 
 LIPETSK_BBOX = (52.5320, 39.4596, 52.6457, 39.7153)
 PBF_FILENAME = "planet_39.4596,52.532_39.7153,52.6457.osm.pbf"
-GRAPH_SCHEMA = 6
+GRAPH_SCHEMA = 7
 EXCLUDE = {"motorway", "motorway_link", "construction", "proposed", "raceway"}
 GRID_LAT, GRID_LON = 0.01, 0.015
 
