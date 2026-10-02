@@ -225,7 +225,7 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35):
         total_score, criteria = path_score(graph, shortest_ids)
         coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in shortest_ids]
         return _result(start_point, goal_point, snap_s, snap_g, shortest_m, shortest_m,
-                       total_score, criteria, coordinates, expanded, True)
+                       total_score, criteria, coordinates, expanded, True, max_distance)
 
     node_ids = []
     cur = best_goal
