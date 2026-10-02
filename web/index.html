@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WalkRoute Demo</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+  <aside class="panel">
+    <h1>WalkRoute</h1>
+    <div class="sub">Демонстрация собственного алгоритма</div>
+    <div id="status" class="status">Загрузка графа Липецка…</div>
+    <div class="row"><label>Максимальный объезд</label><b id="detourValue">135%</b></div>
+    <input id="detour" type="range" min="100" max="180" value="135">
+    <div class="buttons">
+      <button id="build" disabled>Построить маршрут</button>
+      <button id="clear">Сбросить</button>
+    </div>
+    <div class="hint">Клик по карте: старт → финиш.</div>
+    <section id="result" class="result hidden">
+      <div><span>Длина</span><strong id="distance">—</strong></div>
+      <div><span>Баллы</span><strong id="score">—</strong></div>
+      <div><span>Баллы/км</span><strong id="scoreKm">—</strong></div>
+      <div><span>Предел объезда</span><strong id="limit">—</strong></div>
+      <h2>Вклад критериев</h2>
+      <div id="criteria"></div>
+    </section>
+    <div class="footer">OSM · Overpass · собственный поиск пути</div>
+  </aside>
+  <main id="map"></main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/web/app.js"></script>
+</body>
+</html>
