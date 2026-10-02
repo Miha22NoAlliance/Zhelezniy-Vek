@@ -466,8 +466,14 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
                 "elevation_delta_m": round(elevation_delta, 2) if elevation_delta is not None else None,
                 "incline_pct": round(incline, 2) if incline else None,
             }
+            reverse_meta = {
+                "highway": tags.get("highway", ""),
+                "stairs": tags.get("highway") == "steps",
+                "elevation_delta_m": round(-elevation_delta, 2) if elevation_delta is not None else None,
+                "incline_pct": round(-incline, 2) if incline else None,
+            }
             edge={"to":sb,"dist":dist,"score":score,"criteria":contrib,**edge_meta}
-            reverse={"to":sa,"dist":dist,"score":score,"criteria":contrib,**edge_meta}
+            reverse={"to":sa,"dist":dist,"score":score,"criteria":contrib,**reverse_meta}
             # Для пешеходного маршрута motor-vehicle oneway не является запретом
             # на обратное движение, поэтому граф строим двунаправленным.
             adj[sa].append(edge);adj[sb].append(reverse);edge_count+=2
