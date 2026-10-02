@@ -422,7 +422,7 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
         "schema":GRAPH_SCHEMA,"bbox":list(LIPETSK_BBOX),"nodes":len(nodes),"edges":edge_count,
         "source":"OpenStreetMap Protocolbuffer PBF (local file)","pbf":pbf_path.name,"offline":True}}
     map_data={"bbox":list(LIPETSK_BBOX),"source":pbf_path.name,"roads":map_roads,
-              "areas":[{"kind":a["kind"],"coords":a["geometry"] for a in areas],
+              "areas":[{"kind":a["kind"],"coords":a["geometry"]} for a in areas],
               "buildings":building_data,"points":map_points}
     graph_path.parent.mkdir(parents=True,exist_ok=True)
     graph_path.write_text(json.dumps(graph,ensure_ascii=False,separators=(",",":")),encoding="utf-8")
