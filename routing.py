@@ -425,7 +425,7 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35,
             best["expanded"], best["fallback"],
             shortest_m * selected_factor,
             mode, best["ascent"], best["descent"], best["stairs"],
-            selected_factor, True, tested
+            selected_factor, True, tested, _segment_styles(graph, node_ids)
         )
 
     detour_factor = max(1.0, min(float(detour_factor), 1.8))
@@ -447,13 +447,60 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35,
         best["score"], best["criteria"], coordinates,
         best["expanded"], best["fallback"], max_distance,
         mode, best["ascent"], best["descent"], best["stairs"],
-        detour_factor, False, None
+        detour_factor, False, None, _segment_styles(graph, node_ids)
     )
+
+def _segment_styles(graph, node_ids):
+    styles = []
+    for a, b in zip(node_ids, node_ids[1:]):
+        edge = _find_edge(graph, a, b)
+        if edge is None:
+            styles.append({
+                "quality": 0.0,
+                "kind": "neutral",
+                "stairs": False,
+                "grade_pct": None,
+            })
+            continue
+
+        dist_km = max(edge["dist"] / 1000.0, 0.001)
+        quality = edge.get("score", 0.0) / dist_km
+
+        # Для визуальной оценки учитываем уклон и лестницы.
+        delta = edge.get("elevation_delta_m")
+        if delta is not None:
+            grade = abs(delta) / max(edge["dist"], 1.0) * 100.0
+            if delta > 0:
+                quality -= min(8.0, grade * 0.9)
+            elif delta < 0:
+                quality -= min(2.0, grade * 0.18)
+        else:
+            grade = None
+
+        if edge.get("stairs"):
+            quality -= 8.0
+
+        if quality >= 6.0:
+            kind = "good"
+        elif quality <= -4.0:
+            kind = "bad"
+        else:
+            kind = "neutral"
+
+        styles.append({
+            "quality": round(quality, 2),
+            "kind": kind,
+            "stairs": bool(edge.get("stairs")),
+            "grade_pct": round(grade, 2) if grade is not None else None,
+        })
+    return styles
+
 
 def _result(start_point, goal_point, snap_s, snap_g, distance_m, shortest_m,
             score, criteria, coordinates, expanded, fallback,
             max_distance=None, mode="quality", ascent=0.0, descent=0.0,
-            stairs=0, selected_detour=1.0, automatic=False, tested_detours=None):
+            stairs=0, selected_detour=1.0, automatic=False, tested_detours=None,
+            segments=None):
     if max_distance is None:
         max_distance = distance_m
     return {
@@ -478,6 +525,7 @@ def _result(start_point, goal_point, snap_s, snap_g, distance_m, shortest_m,
         "selected_detour_pct": round(selected_detour * 100),
         "automatic": automatic,
         "tested_detours": tested_detours,
+        "segments": segments if segments is not None else [],
         "fallback": fallback,
         "repeated_points": len(coordinates) - len({
             (round(p[0], 7), round(p[1], 7)) for p in coordinates
