@@ -187,7 +187,7 @@ def _tags(keys, vals, strings):
 
 
 def _node(data, strings, granularity, lat_off, lon_off):
-    node_id = _zz(_one(data, 1))
+    node_id = _one(data, 1)
     lat = 1e-9 * (lat_off + granularity * _zz(_one(data, 8)))
     lon = 1e-9 * (lon_off + granularity * _zz(_one(data, 9)))
     return node_id, lat, lon, _tags(_vals(data,2), _vals(data,3), strings)
