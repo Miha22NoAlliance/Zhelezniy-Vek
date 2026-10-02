@@ -288,6 +288,7 @@ def _route_candidate(graph, start, goal, max_distance, quality_weight, mode):
         "descent": descent,
         "stairs": stairs,
         "simple_cost": simple_cost,
+        "fallback": False,
     }
 
 
