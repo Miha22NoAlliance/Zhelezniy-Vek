@@ -207,7 +207,7 @@ def _quality_edge_cost(edge, quality_weight):
         factor *= 1.18
 
     ratio = edge.get("score", 0.0) / dist
-    exponent = max(-5.0, min(5.0, -quality_weight * ratio))
+    exponent = max(-8.0, min(8.0, -quality_weight * ratio))
     return dist * factor * math.exp(exponent)
 
 
@@ -298,11 +298,11 @@ AUTO_DETOURS = tuple(round(x / 100.0, 2) for x in range(110, 181, 10))
 def _search_weights(mode, automatic):
     if mode == "simple":
         if automatic:
-            return [0.0, 8.0, 18.0, 24.0]
-        return [0.0, 1.0, 2.5, 5.0, 9.0, 15.0, 24.0]
+            return [0.0, 5.0, 12.0, 24.0, 45.0, 68.0]
+        return [0.0, 1.0, 2.5, 5.0, 9.0, 15.0, 24.0, 36.0, 52.0, 72.0]
     if automatic:
-        return [0.0, 24.0, 80.0, 220.0]
-    return [0.0, 4.0, 10.0, 20.0, 40.0, 80.0, 140.0, 220.0, 340.0]
+        return [0.0, 25.0, 75.0, 150.0, 300.0, 600.0]
+    return [0.0, 4.0, 10.0, 20.0, 40.0, 80.0, 140.0, 220.0, 340.0, 520.0, 780.0, 1100.0]
 
 
 def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
