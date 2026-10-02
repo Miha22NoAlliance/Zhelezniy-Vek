@@ -5,3 +5,6 @@ venv/
 .DS_Store
 Thumbs.db
 data/*.json
+
+data/*.tif
+data/*.tiff
