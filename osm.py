@@ -247,7 +247,7 @@ def _blob(data):
 
 
 def parse_osm_pbf(path: Path):
-    nodes={}; ways=[]
+    nodes={}; node_tags={}; ways=[]
     with path.open("rb") as fp:
         while True:
             head=fp.read(4)
@@ -267,9 +267,11 @@ def parse_osm_pbf(path: Path):
             if len(blob)!=size: raise ValueError("Оборванный PBF Blob")
             if typ!="OSMData": continue
             bn,bw=_primitive(_blob(blob))
-            for nid,lat,lon,_ in bn: nodes[nid]=(lat,lon)
+            for nid,lat,lon,tags in bn:
+                nodes[nid]=(lat,lon)
+                if tags: node_tags[nid]=tags
             ways.extend(bw)
-    return nodes,ways
+    return nodes,node_tags,ways
 
 
 def _area_kind(tags):
@@ -280,6 +282,7 @@ def _area_kind(tags):
     if leisure=="garden": return "garden"
     if landuse in {"grass","meadow"} or natural in {"grassland","meadow"}: return "green"
     if landuse=="industrial": return "industrial"
+    if tags.get("building"): return "building"
     return None
 
 
@@ -352,12 +355,13 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
         raise FileNotFoundError(f"Не найден локальный OSM PBF: data/{PBF_FILENAME}")
 
     weights=load_weights()
-    node_map,ways=parse_osm_pbf(pbf_path)
-    roads=[];area_ways=[]
+    node_map,node_tags,ways=parse_osm_pbf(pbf_path)
+    roads=[];area_ways=[];buildings=[]
     for wid,refs,tags in ways:
         if is_walkable(tags): roads.append((wid,refs,tags))
         k=_area_kind(tags)
-        if k: area_ways.append((wid,refs,k))
+        if k and k!="building": area_ways.append((wid,refs,k))
+        if tags.get("building"): buildings.append((wid,refs,tags.get("building","yes")))
 
     used_nodes=set()
     for _,refs,_ in roads:
@@ -374,7 +378,26 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
         g=_geometry(node_map,refs)
         if g and len(g)>=3 and haversine(tuple(g[0]),tuple(g[-1]))<=5:
             areas.append({"kind":kind,"geometry":g})
+    building_data=[]
+    for _,refs,kind in buildings:
+        g=_geometry(node_map,refs)
+        if g and len(g)>=3 and haversine(tuple(g[0]),tuple(g[-1]))<=10:
+            building_data.append({"kind":kind,"coords":g})
     _bbox(areas);aidx=_area_index(areas)
+
+    map_points=[]
+    for nid,tags in node_tags.items():
+        if nid not in node_map: continue
+        lat,lon=node_map[nid]
+        if not(LIPETSK_BBOX[0]<=lat<=LIPETSK_BBOX[2] and LIPETSK_BBOX[1]<=lon<=LIPETSK_BBOX[3]): continue
+        typ=None
+        if tags.get("highway")=="crossing": typ="crossing"
+        elif tags.get("highway")=="traffic_signals": typ="traffic_signals"
+        elif tags.get("railway")=="level_crossing": typ="crossing"
+        elif tags.get("highway")=="bus_stop" or tags.get("public_transport")=="platform": typ="bus_stop"
+        elif tags.get("amenity") in {"school","hospital","pharmacy","fuel","cafe","restaurant","bank","parking"}: typ=tags["amenity"]
+        elif tags.get("entrance"): typ="entrance"
+        if typ: map_points.append({"type":typ,"lat":lat,"lon":lon})
 
     adj={nid:[] for nid in nodes}
     edge_count=0
@@ -399,7 +422,8 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
         "schema":GRAPH_SCHEMA,"bbox":list(LIPETSK_BBOX),"nodes":len(nodes),"edges":edge_count,
         "source":"OpenStreetMap Protocolbuffer PBF (local file)","pbf":pbf_path.name,"offline":True}}
     map_data={"bbox":list(LIPETSK_BBOX),"source":pbf_path.name,"roads":map_roads,
-              "areas":[{"kind":a["kind"],"coords":a["geometry"]} for a in areas]}
+              "areas":[{"kind":a["kind"],"coords":a["geometry"] for a in areas],
+              "buildings":building_data,"points":map_points}
     graph_path.parent.mkdir(parents=True,exist_ok=True)
     graph_path.write_text(json.dumps(graph,ensure_ascii=False,separators=(",",":")),encoding="utf-8")
     map_path.write_text(json.dumps(map_data,ensure_ascii=False,separators=(",",":")),encoding="utf-8")
