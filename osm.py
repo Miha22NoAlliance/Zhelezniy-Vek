@@ -6,11 +6,12 @@ import struct
 import zlib
 from pathlib import Path
 
+from dem import open_dem
 from routing import haversine
 
 LIPETSK_BBOX = (52.5320, 39.4596, 52.6457, 39.7153)
 PBF_FILENAME = "planet_39.4596,52.532_39.7153,52.6457.osm.pbf"
-GRAPH_SCHEMA = 5
+GRAPH_SCHEMA = 6
 EXCLUDE = {"motorway", "motorway_link", "construction", "proposed", "raceway"}
 GRID_LAT, GRID_LON = 0.01, 0.015
 
@@ -390,6 +391,7 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
         raise FileNotFoundError(f"Не найден локальный OSM PBF: data/{PBF_FILENAME}")
 
     weights=load_weights()
+    dem, dem_name = open_dem(pbf_path.parent)
     node_map,node_tags,ways=parse_osm_pbf(pbf_path)
     roads=[];area_ways=[];buildings=[]
     for wid,refs,tags in ways:
@@ -411,6 +413,11 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
         raw_ele = node_tags.get(nid, {}).get("ele")
         if raw_ele is not None:
             ele = num(str(raw_ele).replace(",", "."))
+        if ele is None and dem is not None:
+            try:
+                ele = dem.sample(lat, lon)
+            except Exception:
+                ele = None
         nodes[str(nid)] = [lat, lon, ele] if ele is not None else [lat, lon]
     map_roads=[]
     for _,refs,tags in roads:
@@ -480,7 +487,10 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
 
     graph={"nodes":nodes,"adj":adj,"meta":{
         "schema":GRAPH_SCHEMA,"bbox":list(LIPETSK_BBOX),"nodes":len(nodes),"edges":edge_count,
-        "source":"OpenStreetMap Protocolbuffer PBF (local file)","pbf":pbf_path.name,"offline":True}}
+        "source":"OpenStreetMap Protocolbuffer PBF (local file)","pbf":pbf_path.name,
+        "elevation":"Copernicus DEM" if dem is not None else "OSM ele tags only",
+        "dem":dem_name if dem is not None else None,
+        "offline":True}}
     map_data={"bbox":list(LIPETSK_BBOX),"source":pbf_path.name,"roads":map_roads,
               "areas":[{"kind":a["kind"],"coords":a["geometry"]} for a in areas],
               "buildings":building_data,"points":map_points}
