@@ -10,6 +10,7 @@ from routing import haversine
 
 LIPETSK_BBOX = (52.5320, 39.4596, 52.6457, 39.7153)
 PBF_FILENAME = "planet_39.4596,52.532_39.7153,52.6457.osm.pbf"
+GRAPH_SCHEMA = 2
 EXCLUDE = {"motorway", "motorway_link", "construction", "proposed", "raceway"}
 GRID_LAT, GRID_LON = 0.01, 0.015
 
@@ -24,6 +25,21 @@ def num(v, default=0.0):
         return float(v)
     except (TypeError, ValueError):
         return default
+
+
+def is_walkable(tags):
+    h = tags.get("highway", "")
+    if not h or h in EXCLUDE:
+        return False
+    access = tags.get("access", "").lower()
+    foot = tags.get("foot", "").lower()
+    if access in {"no", "private"} and foot not in {"yes", "designated"}:
+        return False
+    if foot in {"no", "private"}:
+        return False
+    if h in {"trunk", "trunk_link"} and foot not in {"yes", "designated"}:
+        return False
+    return True
 
 
 def rate(tags, weights, context):
@@ -42,8 +58,10 @@ def rate(tags, weights, context):
         out[k] = weights[k]
 
     natural = context.get("natural_score", 0)
-    if natural >= 0.8: add("park"); add("natural_green")
-    elif natural >= 0.5: add("green_open")
+    if natural >= 0.8:
+        add("park"); add("natural_green")
+    elif natural >= 0.5:
+        add("green_open")
     if context.get("forest"): add("forest")
     if context.get("waterfront"): add("waterfront")
     if context.get("water_near"): add("water_near")
@@ -54,7 +72,8 @@ def rate(tags, weights, context):
     if h in {"residential", "living_street"}: add("quiet_residential")
     if h == "pedestrian": add("pedestrian_street")
     if h in {"footway","path","pedestrian","cycleway","track","steps"}: add("no_motor_traffic")
-    if h not in {"primary","secondary","tertiary","primary_link","secondary_link","tertiary_link"}: add("away_major_road")
+    if h not in {"primary","secondary","tertiary","primary_link","secondary_link","tertiary_link"}:
+        add("away_major_road")
     if h in {"primary","primary_link","secondary","secondary_link"}: add("major_road")
     if lanes >= 3 or maxspeed >= 60: add("heavy_traffic")
     if h in {"trunk","trunk_link"}: add("noisy_zone")
@@ -77,10 +96,12 @@ def rate(tags, weights, context):
     if context.get("major_crossing"): add("major_crossing")
     if h == "steps": add("stairs")
 
-    if surface in {"ground","dirt","unpaved","gravel","sett","sand"} or smooth in {"bad","very_bad","horrible","impassable"}: add("bad_surface")
+    if surface in {"ground","dirt","unpaved","gravel","sett","sand"} or smooth in {"bad","very_bad","horrible","impassable"}:
+        add("bad_surface")
     if smooth in {"horrible","very_horrible","impassable"}: add("very_bad_surface")
     if h in {"path","track"} and sidewalk == "no": add("narrow_path")
-    if h in {"primary","secondary","tertiary","residential","service"} and sidewalk in {"","no"}: add("no_sidewalk")
+    if h in {"primary","secondary","tertiary","residential","service"} and sidewalk in {"","no"}:
+        add("no_sidewalk")
 
     inc = abs(num(tags.get("incline", "").replace("%", "")))
     if inc >= 8: add("very_steep")
@@ -114,21 +135,27 @@ def _fields(data):
         if wire == 0:
             value, i = _varint(data, i)
         elif wire == 1:
-            value, i = data[i:i+8], i + 8
+            end = i + 8
+            if end > len(data): raise ValueError("Оборванное fixed64 protobuf-поле")
+            value, i = data[i:end], end
         elif wire == 2:
             n, i = _varint(data, i)
-            value, i = data[i:i+n], i + n
+            end = i + n
+            if end > len(data): raise ValueError("Оборванное protobuf-поле")
+            value, i = data[i:end], end
         elif wire == 5:
-            value, i = data[i:i+4], i + 4
+            end = i + 4
+            if end > len(data): raise ValueError("Оборванное fixed32 protobuf-поле")
+            value, i = data[i:end], end
         else:
             raise ValueError(f"Неподдерживаемый protobuf wire type: {wire}")
         yield field, wire, value
 
 
-def _vals(data, num_field, signed=False):
+def _vals(data, number, signed=False):
     out = []
     for f, wire, v in _fields(data):
-        if f != num_field: continue
+        if f != number: continue
         if wire == 2:
             i = 0
             while i < len(v):
@@ -139,263 +166,241 @@ def _vals(data, num_field, signed=False):
     return out
 
 
-def _one(data, num_field, default=0):
+def _one(data, number, default=0):
     for f, wire, v in _fields(data):
-        if f == num_field and wire == 0: return int(v)
+        if f == number and wire == 0: return int(v)
     return default
 
 
-def _bytes(data, num_field):
+def _bytes(data, number):
     for f, wire, v in _fields(data):
-        if f == num_field and wire == 2: return bytes(v)
+        if f == number and wire == 2: return bytes(v)
     return None
 
 
 def _strings(data):
-    return [bytes(v).decode("utf-8", errors="replace")
-            for f, w, v in _fields(data) if f == 1 and w == 2]
+    return [bytes(v).decode("utf-8", errors="replace") for f,w,v in _fields(data) if f == 1 and w == 2]
 
 
 def _tags(keys, vals, strings):
-    return {strings[k]: strings[v] for k, v in zip(keys, vals)
-            if 0 <= k < len(strings) and 0 <= v < len(strings)}
+    return {strings[k]: strings[v] for k,v in zip(keys,vals) if 0 <= k < len(strings) and 0 <= v < len(strings)}
 
 
 def _node(data, strings, granularity, lat_off, lon_off):
     node_id = _zz(_one(data, 1))
     lat = 1e-9 * (lat_off + granularity * _zz(_one(data, 8)))
     lon = 1e-9 * (lon_off + granularity * _zz(_one(data, 9)))
-    return node_id, lat, lon, _tags(_vals(data, 2), _vals(data, 3), strings)
+    return node_id, lat, lon, _tags(_vals(data,2), _vals(data,3), strings)
 
 
 def _dense(data, strings, granularity, lat_off, lon_off):
-    ids = _vals(data, 1, True); lats = _vals(data, 8, True); lons = _vals(data, 9, True); kv = _vals(data, 10)
-    for arr in (ids, lats, lons):
-        s = 0
-        for i, v in enumerate(arr):
-            s += v; arr[i] = s
-    tagged = []
-    p = 0
+    ids = _vals(data,1,True); lats = _vals(data,8,True); lons = _vals(data,9,True); kv = _vals(data,10)
+    for arr in (ids,lats,lons):
+        s=0
+        for i,v in enumerate(arr): s += v; arr[i]=s
+    tagged=[]; p=0
     for _ in ids:
-        t = {}
+        t={}
         while p < len(kv):
-            k = kv[p]; p += 1
+            k=kv[p]; p+=1
             if k == 0: break
             if p >= len(kv): break
-            v = kv[p]; p += 1
-            if 0 <= k < len(strings) and 0 <= v < len(strings): t[strings[k]] = strings[v]
+            v=kv[p]; p+=1
+            if 0 <= k < len(strings) and 0 <= v < len(strings): t[strings[k]]=strings[v]
         tagged.append(t)
-    out = []
-    for i in range(min(len(ids), len(lats), len(lons))):
-        out.append((ids[i],
-                    1e-9 * (lat_off + granularity * lats[i]),
-                    1e-9 * (lon_off + granularity * lons[i]),
+    out=[]
+    for i in range(min(len(ids),len(lats),len(lons))):
+        out.append((ids[i],1e-9*(lat_off+granularity*lats[i]),1e-9*(lon_off+granularity*lons[i]),
                     tagged[i] if i < len(tagged) else {}))
     return out
 
 
 def _way(data, strings):
-    wid = _one(data, 1)
-    refs = _vals(data, 8, True)
-    s = 0
-    for i, v in enumerate(refs):
-        s += v; refs[i] = s
-    return wid, refs, _tags(_vals(data, 2), _vals(data, 3), strings)
+    wid = _one(data,1)
+    refs = _vals(data,8,True); s=0
+    for i,v in enumerate(refs): s += v; refs[i]=s
+    return wid, refs, _tags(_vals(data,2),_vals(data,3),strings)
 
 
 def _primitive(data):
-    strings = _strings(_bytes(data, 1) or b"")
-    granularity = _one(data, 17, 100)
-    lat_off = _one(data, 18, 0)
-    lon_off = _one(data, 19, 0)
-    nodes, ways = [], []
-    for f, w, group in _fields(data):
+    strings=_strings(_bytes(data,1) or b"")
+    granularity=_one(data,17,100); lat_off=_one(data,18,0); lon_off=_one(data,19,0)
+    nodes=[]; ways=[]
+    for f,w,group in _fields(data):
         if f != 2 or w != 2: continue
-        for sf, sw, value in _fields(group):
+        for sf,sw,value in _fields(group):
             if sw != 2: continue
-            if sf == 1: nodes.append(_node(value, strings, granularity, lat_off, lon_off))
-            elif sf == 2: nodes.extend(_dense(value, strings, granularity, lat_off, lon_off))
-            elif sf == 3: ways.append(_way(value, strings))
-    return nodes, ways
+            if sf == 1: nodes.append(_node(value,strings,granularity,lat_off,lon_off))
+            elif sf == 2: nodes.extend(_dense(value,strings,granularity,lat_off,lon_off))
+            elif sf == 3: ways.append(_way(value,strings))
+    return nodes,ways
 
 
 def _blob(data):
-    raw = None; zdata = None
-    for f, w, v in _fields(data):
-        if f == 1 and w == 2: raw = bytes(v)
-        elif f == 3 and w == 2: zdata = bytes(v)
+    raw=None; zdata=None
+    for f,w,v in _fields(data):
+        if f == 1 and w == 2: raw=bytes(v)
+        elif f == 3 and w == 2: zdata=bytes(v)
     if raw is not None: return raw
     if zdata is not None: return zlib.decompress(zdata)
     raise ValueError("PBF Blob не содержит raw или zlib_data")
 
 
 def parse_osm_pbf(path: Path):
-    nodes, ways = {}, []
+    nodes={}; ways=[]
     with path.open("rb") as fp:
         while True:
-            h = fp.read(4)
-            if not h: break
-            if len(h) != 4: raise ValueError("Оборванный PBF BlobHeader")
-            hs = struct.unpack(">I", h)[0]
-            if not 0 < hs <= 64 * 1024: raise ValueError("Некорректный размер PBF BlobHeader")
-            header = fp.read(hs)
-            if len(header) != hs: raise ValueError("Оборванный PBF BlobHeader")
-            typ = None; size = None
-            for f, w, v in _fields(header):
-                if f == 1 and w == 2: typ = bytes(v).decode("utf-8", errors="replace")
-                elif f == 3 and w == 0: size = int(v)
-            if size is None or not 0 <= size <= 256 * 1024 * 1024:
+            head=fp.read(4)
+            if not head: break
+            if len(head)!=4: raise ValueError("Оборванный PBF BlobHeader")
+            hs=struct.unpack(">I",head)[0]
+            if not 0 < hs <= 64*1024: raise ValueError("Некорректный размер PBF BlobHeader")
+            header=fp.read(hs)
+            if len(header)!=hs: raise ValueError("Оборванный PBF BlobHeader")
+            typ=None; size=None
+            for f,w,v in _fields(header):
+                if f==1 and w==2: typ=bytes(v).decode("utf-8",errors="replace")
+                elif f==3 and w==0: size=int(v)
+            if size is None or not 0 <= size <= 256*1024*1024:
                 raise ValueError(f"Некорректный размер PBF Blob: {size}")
-            blob = fp.read(size)
-            if len(blob) != size: raise ValueError("Оборванный PBF Blob")
-            if typ != "OSMData": continue
-            bn, bw = _primitive(_blob(blob))
-            for nid, lat, lon, _ in bn: nodes[nid] = (lat, lon)
+            blob=fp.read(size)
+            if len(blob)!=size: raise ValueError("Оборванный PBF Blob")
+            if typ!="OSMData": continue
+            bn,bw=_primitive(_blob(blob))
+            for nid,lat,lon,_ in bn: nodes[nid]=(lat,lon)
             ways.extend(bw)
-    return nodes, ways
+    return nodes,ways
 
 
 def _area_kind(tags):
-    leisure, landuse, natural = tags.get("leisure"), tags.get("landuse"), tags.get("natural")
-    if leisure in {"park", "recreation_ground"}: return "park"
-    if natural in {"wood", "forest"} or landuse == "forest": return "forest"
-    if natural in {"water", "riverbank"} or tags.get("water"): return "water"
-    if leisure == "garden": return "garden"
-    if landuse in {"grass", "meadow"} or natural in {"grassland", "meadow"}: return "green"
-    if landuse == "industrial": return "industrial"
+    leisure,landuse,natural=tags.get("leisure"),tags.get("landuse"),tags.get("natural")
+    if leisure in {"park","recreation_ground"}: return "park"
+    if natural in {"wood","forest"} or landuse=="forest": return "forest"
+    if natural in {"water","riverbank"} or tags.get("water"): return "water"
+    if leisure=="garden": return "garden"
+    if landuse in {"grass","meadow"} or natural in {"grassland","meadow"}: return "green"
+    if landuse=="industrial": return "industrial"
     return None
 
 
 def _geometry(node_map, refs):
-    if len(refs) < 2: return None
-    out = []
+    if len(refs)<2: return None
+    out=[]
     for ref in refs:
-        p = node_map.get(ref)
+        p=node_map.get(ref)
         if p is None: return None
-        out.append([p[0], p[1]])
+        out.append([p[0],p[1]])
     return out
 
 
 def _bbox(areas):
     for a in areas:
-        g = a["geometry"]
-        a["bbox"] = [min(x[0] for x in g), min(x[1] for x in g),
-                     max(x[0] for x in g), max(x[1] for x in g)]
+        g=a["geometry"]
+        a["bbox"]=[min(x[0] for x in g),min(x[1] for x in g),max(x[0] for x in g),max(x[1] for x in g)]
 
 
-def _inside(lat, lon, geom):
-    inside = False
-    j = len(geom) - 1
+def _inside(lat,lon,geom):
+    inside=False;j=len(geom)-1
     for i in range(len(geom)):
-        yi, xi = geom[i]; yj, xj = geom[j]
-        if ((yi > lat) != (yj > lat)) and lon < (xj-xi) * (lat-yi) / ((yj-yi) or 1e-12) + xi:
-            inside = not inside
-        j = i
+        yi,xi=geom[i];yj,xj=geom[j]
+        if ((yi>lat)!=(yj>lat)) and lon<(xj-xi)*(lat-yi)/((yj-yi) or 1e-12)+xi: inside=not inside
+        j=i
     return inside
 
 
 def _area_index(areas):
-    idx = {}
-    for n, a in enumerate(areas):
-        b = a["bbox"]
-        y0, y1 = math.floor((b[0]-0.002)/GRID_LAT), math.floor((b[2]+0.002)/GRID_LAT)
-        x0, x1 = math.floor((b[1]-0.003)/GRID_LON), math.floor((b[3]+0.003)/GRID_LON)
-        for y in range(int(y0), int(y1)+1):
-            for x in range(int(x0), int(x1)+1):
-                idx.setdefault((y, x), []).append(n)
+    idx={}
+    for n,a in enumerate(areas):
+        b=a["bbox"]
+        y0,y1=math.floor((b[0]-.002)/GRID_LAT),math.floor((b[2]+.002)/GRID_LAT)
+        x0,x1=math.floor((b[1]-.003)/GRID_LON),math.floor((b[3]+.003)/GRID_LON)
+        for y in range(int(y0),int(y1)+1):
+            for x in range(int(x0),int(x1)+1): idx.setdefault((y,x),[]).append(n)
     return idx
 
 
-def _context(mid, areas, idx):
-    lat, lon = mid
-    out = {}
-    yc = range(int(math.floor((lat-.002)/GRID_LAT)), int(math.floor((lat+.002)/GRID_LAT))+1)
-    xc = range(int(math.floor((lon-.003)/GRID_LON)), int(math.floor((lon+.003)/GRID_LON))+1)
-    seen = set()
-    for y in yc:
-        for x in xc: seen.update(idx.get((y, x), ()))
+def _context(mid,areas,idx):
+    lat,lon=mid;out={};seen=set()
+    for y in range(int(math.floor((lat-.002)/GRID_LAT)),int(math.floor((lat+.002)/GRID_LAT))+1):
+        for x in range(int(math.floor((lon-.003)/GRID_LON)),int(math.floor((lon+.003)/GRID_LON))+1):
+            seen.update(idx.get((y,x),()))
     for n in seen:
-        a = areas[n]; b = a["bbox"]
-        if not (b[0]-.002 <= lat <= b[2]+.002 and b[1]-.003 <= lon <= b[3]+.003): continue
-        if not _inside(lat, lon, a["geometry"]): continue
-        k = a["kind"]
-        if k == "park": out["natural_score"] = max(out.get("natural_score", 0), 1.0)
-        elif k == "forest": out["forest"] = True; out["natural_score"] = max(out.get("natural_score", 0), .85)
-        elif k == "green": out["natural_score"] = max(out.get("natural_score", 0), .65)
-        elif k == "garden": out["garden"] = True; out["natural_score"] = max(out.get("natural_score", 0), .7)
-        elif k == "water": out["water_near"] = True; out["waterfront"] = True
-        elif k == "industrial": out["industrial"] = True
+        a=areas[n];b=a["bbox"]
+        if not(b[0]-.002<=lat<=b[2]+.002 and b[1]-.003<=lon<=b[3]+.003): continue
+        if not _inside(lat,lon,a["geometry"]): continue
+        k=a["kind"]
+        if k=="park": out["natural_score"]=max(out.get("natural_score",0),1)
+        elif k=="forest": out["forest"]=True;out["natural_score"]=max(out.get("natural_score",0),.85)
+        elif k=="green": out["natural_score"]=max(out.get("natural_score",0),.65)
+        elif k=="garden": out["garden"]=True;out["natural_score"]=max(out.get("natural_score",0),.7)
+        elif k=="water": out["water_near"]=True;out["waterfront"]=True
+        elif k=="industrial": out["industrial"]=True
     return out
 
 
 def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
     if graph_path.exists() and map_path.exists():
-        return (json.loads(graph_path.read_text(encoding="utf-8")),
-                json.loads(map_path.read_text(encoding="utf-8")))
+        try:
+            graph=json.loads(graph_path.read_text(encoding="utf-8"))
+            map_data=json.loads(map_path.read_text(encoding="utf-8"))
+            if graph.get("meta",{}).get("schema") == GRAPH_SCHEMA:
+                return graph,map_data
+        except (OSError,ValueError,json.JSONDecodeError):
+            pass
+
     if not pbf_path.exists():
-        raise FileNotFoundError(
-            f"Не найден локальный OSM PBF: data/{PBF_FILENAME}. "
-            "Положите этот файл рядом с data/lipetsk_graph.json."
-        )
+        raise FileNotFoundError(f"Не найден локальный OSM PBF: data/{PBF_FILENAME}")
 
-    weights = load_weights()
-    node_map, ways = parse_osm_pbf(pbf_path)
-    roads, area_ways = [], []
-    for wid, refs, tags in ways:
-        h = tags.get("highway", "")
-        if h and h not in EXCLUDE: roads.append((wid, refs, tags))
-        k = _area_kind(tags)
-        if k: area_ways.append((wid, refs, tags, k))
+    weights=load_weights()
+    node_map,ways=parse_osm_pbf(pbf_path)
+    roads=[];area_ways=[]
+    for wid,refs,tags in ways:
+        if is_walkable(tags): roads.append((wid,refs,tags))
+        k=_area_kind(tags)
+        if k: area_ways.append((wid,refs,k))
 
-    nodes = {}
-    map_roads = []
-    for _, refs, tags in roads:
-        g = _geometry(node_map, refs)
-        if not g: continue
-        for lat, lon in g: nodes[f"n:{lat:.7f}:{lon:.7f}"] = [lat, lon]
-        map_roads.append({"class": tags.get("highway", ""), "coords": g})
+    used_nodes=set()
+    for _,refs,_ in roads:
+        used_nodes.update(refs)
 
-    areas = []
-    for _, refs, _, kind in area_ways:
-        g = _geometry(node_map, refs)
-        if g and len(g) >= 3 and haversine(tuple(g[0]), tuple(g[-1])) <= 5:
-            areas.append({"kind": kind, "geometry": g})
-    _bbox(areas)
-    aidx = _area_index(areas)
+    nodes={str(nid):[node_map[nid][0],node_map[nid][1]] for nid in used_nodes if nid in node_map}
+    map_roads=[]
+    for _,refs,tags in roads:
+        g=_geometry(node_map,refs)
+        if g: map_roads.append({"class":tags.get("highway",""),"coords":g})
 
-    adj = {k: [] for k in nodes}
-    edge_count = 0
-    for _, refs, tags in roads:
-        g = _geometry(node_map, refs)
-        if not g: continue
-        ids = [f"n:{lat:.7f}:{lon:.7f}" for lat, lon in g]
-        ov = tags.get("oneway", "").lower()
-        one = ov in {"yes", "1", "true", "-1"}
-        rev = ov == "-1"
-        for a, b in zip(ids, ids[1:]):
-            dist = haversine(tuple(nodes[a]), tuple(nodes[b]))
-            if dist < 1: continue
-            mid = ((nodes[a][0]+nodes[b][0])/2, (nodes[a][1]+nodes[b][1])/2)
-            crit = rate(tags, weights, _context(mid, areas, aidx))
-            contrib = {k: v*(dist/1000.0) for k, v in crit.items()}
-            score = sum(contrib.values())
-            if rev: adj[b].append({"to": a, "dist": dist, "score": score, "criteria": contrib})
-            else:
-                adj[a].append({"to": b, "dist": dist, "score": score, "criteria": contrib})
-                if not one: adj[b].append({"to": a, "dist": dist, "score": score, "criteria": contrib})
-            edge_count += 1 if one else 2
+    areas=[]
+    for _,refs,kind in area_ways:
+        g=_geometry(node_map,refs)
+        if g and len(g)>=3 and haversine(tuple(g[0]),tuple(g[-1]))<=5:
+            areas.append({"kind":kind,"geometry":g})
+    _bbox(areas);aidx=_area_index(areas)
 
-    graph = {"nodes": nodes, "adj": adj, "meta": {
-        "bbox": list(LIPETSK_BBOX), "nodes": len(nodes), "edges": edge_count,
-        "source": "OpenStreetMap Protocolbuffer PBF (local file)",
-        "pbf": pbf_path.name, "offline": True
-    }}
-    map_data = {
-        "bbox": list(LIPETSK_BBOX), "source": pbf_path.name,
-        "roads": map_roads,
-        "areas": [{"kind": a["kind"], "coords": a["geometry"]} for a in areas]
-    }
-    graph_path.parent.mkdir(parents=True, exist_ok=True)
-    graph_path.write_text(json.dumps(graph, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    map_path.write_text(json.dumps(map_data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    return graph, map_data
+    adj={nid:[] for nid in nodes}
+    edge_count=0
+    for _,refs,tags in roads:
+        if len(refs)<2: continue
+        for a,b in zip(refs,refs[1:]):
+            sa,sb=str(a),str(b)
+            if sa not in nodes or sb not in nodes: continue
+            dist=haversine(tuple(nodes[sa]),tuple(nodes[sb]))
+            if dist<1: continue
+            mid=((nodes[sa][0]+nodes[sb][0])/2,(nodes[sa][1]+nodes[sb][1])/2)
+            crit=rate(tags,weights,_context(mid,areas,aidx))
+            contrib={k:v*(dist/1000.0) for k,v in crit.items()}
+            score=sum(contrib.values())
+            edge={"to":sb,"dist":dist,"score":score,"criteria":contrib}
+            reverse={"to":sa,"dist":dist,"score":score,"criteria":contrib}
+            # Для пешеходного маршрута motor-vehicle oneway не является запретом
+            # на обратное движение, поэтому граф строим двунаправленным.
+            adj[sa].append(edge);adj[sb].append(reverse);edge_count+=2
+
+    graph={"nodes":nodes,"adj":adj,"meta":{
+        "schema":GRAPH_SCHEMA,"bbox":list(LIPETSK_BBOX),"nodes":len(nodes),"edges":edge_count,
+        "source":"OpenStreetMap Protocolbuffer PBF (local file)","pbf":pbf_path.name,"offline":True}}
+    map_data={"bbox":list(LIPETSK_BBOX),"source":pbf_path.name,"roads":map_roads,
+              "areas":[{"kind":a["kind"],"coords":a["geometry"]} for a in areas]}
+    graph_path.parent.mkdir(parents=True,exist_ok=True)
+    graph_path.write_text(json.dumps(graph,ensure_ascii=False,separators=(",",":")),encoding="utf-8")
+    map_path.write_text(json.dumps(map_data,ensure_ascii=False,separators=(",",":")),encoding="utf-8")
+    return graph,map_data
