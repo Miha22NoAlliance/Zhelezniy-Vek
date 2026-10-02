@@ -204,7 +204,9 @@ $('routeMode').addEventListener('change',e=>{
   const simple=e.target.value==='simple';
   $('status').textContent=simple
     ? 'Упрощённый режим: прямее, крупнее улицы, меньше лестниц и подъёмов'
-    : 'Качественный режим: ищет более приятный путь';
+    : e.target.value==='aggressive'
+      ? 'Агрессивный качественный режим: сильнее тянется к паркам и хорошим улицам, избегает лишних петель и переходов'
+      : 'Качественный режим: ищет более приятный путь';
 });
 $('clear').onclick=clearAll;$('build').onclick=buildRoute;window.addEventListener('resize',resize);
 
@@ -227,12 +229,14 @@ async function buildRoute(){
     $('selectedDetour').textContent=(data.selected_detour_pct||Math.round($('detour').value))+'%';
     $('limit').textContent=(data.max_distance_m/1000).toFixed(2)+' км';
     $('elevation').textContent=data.ascent_m.toFixed(0)+' м / '+data.descent_m.toFixed(0)+' м';
-    $('stairs').textContent=data.stairs_count.toLocaleString('ru-RU');
+    $('stairs').textContent=data.stairs_count.toLocaleString('ru-RU')+
+      (data.crossings_count!=null?' · переходов: '+data.crossings_count.toLocaleString('ru-RU'):'');
     $('criteria').innerHTML=Object.entries(data.criteria||{}).map(([key,value])=>
       '<div class="crit"><span class="name">'+(labels[key]||key)+'</span><span class="'+(value<0?'minus':'plus')+'">'+
       (value>=0?'+':'')+value.toFixed(1)+'</span></div>').join('');
     $('result').classList.remove('hidden');
-    const modeName=data.mode==='simple'?'Упрощённый маршрут':'Качественный маршрут';
+    const modeName=data.mode==='simple'?'Упрощённый маршрут':
+      data.mode==='aggressive'?'Качественный — агрессивный':'Качественный маршрут';
     const autoText=data.automatic?' · автоматический выбор по баллам/км':'';
     $('status').textContent=modeName+' построен'+autoText+
       ' · объезд '+data.selected_detour_pct+'% · обработано узлов: '+
