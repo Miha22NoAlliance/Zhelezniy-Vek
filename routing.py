@@ -264,7 +264,7 @@ def _result(start_point, goal_point, snap_s, snap_g, distance_m, shortest_m,
         "score_per_km": round(score / max(distance_m / 1000.0, 0.001), 2),
         "expanded_labels": expanded,
         "coordinates": coordinates,
-        "criteria": {k: round(v, 2) for k, v in sorted(criteria.items(), key=lambda kv: -abs(kv[1])) if abs(kv[1]) > 0.001},
+        "criteria": {k: round(v, 2) for k, v in sorted(criteria.items(), key=lambda kv: -abs(kv[1])) if abs(v) > 0.001},
         "fallback": fallback,
         "repeated_points": len(coordinates) - len({(round(p[0], 7), round(p[1], 7)) for p in coordinates}),
     }
