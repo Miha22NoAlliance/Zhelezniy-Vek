@@ -132,6 +132,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     print("WalkRoute Demo — полностью офлайн")
+    print("Build: offline-pbf-v4")
     print(f"PBF: data/{PBF_FILENAME}")
     print("http://127.0.0.1:8765")
     print("Граф и локальная карта будут построены из PBF при первом обращении.")
