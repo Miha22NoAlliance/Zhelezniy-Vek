@@ -1,7 +1,7 @@
 const canvas = document.getElementById('map');
 const ctx = canvas.getContext('2d');
 
-let start=null, goal=null, routeCoordinates=null, graphMeta=null, mapData=null;
+let start=null, goal=null, routeCoordinates=null, routeSegments=null, graphMeta=null, mapData=null;
 let view={lat:52.58885,lon:39.58745,pixelsPerMeter:.8};
 let dragging=false,moved=false,downX=0,downY=0,panStart=null;
 const $=id=>document.getElementById(id);
@@ -128,10 +128,26 @@ function draw(){
     pedestrian:3,tertiary:4,secondary:5,primary:6,trunk:7};
   for(const road of [...(mapData.roads||[])].sort((a,b)=>(order[a.class]||0)-(order[b.class]||0)))drawRoad(road.coords,road.class);
   if(routeCoordinates?.length){
-    let p=project(routeCoordinates[0][0],routeCoordinates[0][1]);ctx.beginPath();ctx.moveTo(p.x,p.y);
-    for(let i=1;i<routeCoordinates.length;i++){p=project(routeCoordinates[i][0],routeCoordinates[i][1]);ctx.lineTo(p.x,p.y);}
+    let p=project(routeCoordinates[0][0],routeCoordinates[0][1]);
+    ctx.beginPath();ctx.moveTo(p.x,p.y);
+    for(let i=1;i<routeCoordinates.length;i++){
+      p=project(routeCoordinates[i][0],routeCoordinates[i][1]);ctx.lineTo(p.x,p.y);
+    }
     ctx.strokeStyle='#17191d';ctx.lineWidth=8;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();
     ctx.strokeStyle='#ffad1f';ctx.lineWidth=5;ctx.stroke();
+
+    // Поверх базовой жёлтой линии подсвечиваем качество каждого сегмента.
+    if(routeSegments?.length){
+      for(let i=0;i<routeSegments.length;i++){
+        const seg=routeSegments[i];
+        if(seg.kind==='neutral')continue;
+        const a=project(routeCoordinates[i][0],routeCoordinates[i][1]);
+        const b=project(routeCoordinates[i+1][0],routeCoordinates[i+1][1]);
+        ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
+        ctx.strokeStyle=seg.kind==='good'?'#42d56b':'#ff4d4d';
+        ctx.lineWidth=3.1;ctx.lineCap='round';ctx.stroke();
+      }
+    }
   }
   if(view.pixelsPerMeter > .22){
     for(const item of mapData.points||[])drawPointFeature(item);
@@ -145,12 +161,12 @@ function draw(){
 function setPoint(lat,lon){
   if(!start)start=[lat,lon];
   else if(!goal)goal=[lat,lon];
-  else{start=[lat,lon];goal=null;routeCoordinates=null;$('result').classList.add('hidden');}
+  else{start=[lat,lon];goal=null;routeCoordinates=null;routeSegments=null;$('result').classList.add('hidden');}
   $('build').disabled=!(start&&goal)||!mapData;
   $('status').textContent=start&&goal?'Готово к построению маршрута':'Теперь выберите финиш';draw();
 }
 function clearAll(){
-  start=goal=null;routeCoordinates=null;$('result').classList.add('hidden');$('build').disabled=true;
+  start=goal=null;routeCoordinates=null;routeSegments=null;$('result').classList.add('hidden');$('build').disabled=true;
   $('status').textContent=mapData?'Выберите старт и финиш на карте':'Загрузка локальной карты…';draw();
 }
 function pointerLocal(e){const r=canvas.getBoundingClientRect();return[e.clientX-r.left,e.clientY-r.top];}
@@ -203,7 +219,7 @@ async function buildRoute(){
     });
     const r=await fetch('/api/route?'+params,{cache:'no-store'}),data=await r.json();
     if(!r.ok)throw new Error(data.error||'Маршрут не найден');
-    routeCoordinates=data.coordinates;draw();
+    routeCoordinates=data.coordinates;routeSegments=data.segments||[];draw();
     const lats=data.coordinates.map(p=>p[0]),lons=data.coordinates.map(p=>p[1]);
     fitBounds([Math.min(...lats),Math.min(...lons),Math.max(...lats),Math.max(...lons)],70);
     $('distance').textContent=(data.distance_m/1000).toFixed(2)+' км';
