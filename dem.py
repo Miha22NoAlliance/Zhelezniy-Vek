@@ -56,6 +56,70 @@ def _ascii_value(data: bytes, offset: int, count: int):
     return raw.rstrip(b"\\x00").decode("ascii", errors="replace").strip()
 
 
+def _lzw_decode(data: bytes):
+    """Decode TIFF LZW stream (MSB-first, Clear=256, EOI=257)."""
+    CLEAR = 256
+    EOI = 257
+
+    dictionary = {i: bytes([i]) for i in range(256)}
+    next_code = 258
+    code_size = 9
+    bit_pos = 0
+
+    def read_code():
+        nonlocal bit_pos
+        if bit_pos + code_size > len(data) * 8:
+            return None
+        value = 0
+        for _ in range(code_size):
+            byte_pos = bit_pos >> 3
+            shift = 7 - (bit_pos & 7)
+            value = (value << 1) | ((data[byte_pos] >> shift) & 1)
+            bit_pos += 1
+        return value
+
+    first = read_code()
+    if first is None:
+        return b""
+    if first != CLEAR:
+        raise ValueError("Некорректный TIFF LZW: поток не начинается с ClearCode")
+
+    result = bytearray()
+    previous = None
+
+    while True:
+        code = read_code()
+        if code is None or code == EOI:
+            break
+
+        if code == CLEAR:
+            dictionary = {i: bytes([i]) for i in range(256)}
+            next_code = 258
+            code_size = 9
+            previous = None
+            continue
+
+        if code in dictionary:
+            entry = dictionary[code]
+        elif code == next_code and previous is not None:
+            entry = previous + previous[:1]
+        else:
+            raise ValueError(f"Некорректный TIFF LZW code: {code}")
+
+        result.extend(entry)
+
+        if previous is not None:
+            dictionary[next_code] = previous + entry[:1]
+            next_code += 1
+
+            if next_code == (1 << code_size) - 1 and code_size < 12:
+                code_size += 1
+
+        previous = entry
+
+    return bytes(result)
+
+
 class GeoTiffDEM:
     """Минимальный офлайн-чтение GeoTIFF DEM/COG без GDAL/Pillow.
 
@@ -217,10 +281,10 @@ class GeoTiffDEM:
             raise ValueError("DEM должен содержать одну полосу (SamplesPerPixel=1)")
         if self.bits_per_sample not in (16, 32):
             raise ValueError(f"Неподдерживаемая глубина DEM: {self.bits_per_sample} bit")
-        if self.compression not in (1, 8, 32946):
+        if self.compression not in (1, 5, 8, 32946):
             raise ValueError(
                 f"Неподдерживаемое сжатие GeoTIFF: {self.compression}. "
-                "Для Copernicus COG ожидается DEFLATE."
+                "Поддерживаются uncompressed, LZW и DEFLATE."
             )
         if self.predictor not in (1, 3):
             raise ValueError(f"Неподдерживаемый TIFF Predictor: {self.predictor}")
@@ -321,6 +385,8 @@ class GeoTiffDEM:
 
         if self.compression in (8, 32946):
             raw = zlib.decompress(blob)
+        elif self.compression == 5:
+            raw = _lzw_decode(blob)
         else:
             raw = blob
 
