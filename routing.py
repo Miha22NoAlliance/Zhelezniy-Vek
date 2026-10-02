@@ -142,7 +142,24 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35):
             heapq.heappush(queue, (-ns, nd, new_id))
 
     if best_goal is None:
-        raise ValueError("Не удалось найти качественный маршрут в заданном лимите объезда")
+        shortest_path = shortest_distance_route(graph, start, goal)
+        if shortest_path is None:
+            raise ValueError("Не удалось построить маршрут")
+        node_ids, fallback_distance = shortest_path
+        coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in node_ids]
+        return {
+            "start": {"lat": start_point[0], "lon": start_point[1], "snap_m": round(snap_s, 1)},
+            "goal": {"lat": goal_point[0], "lon": goal_point[1], "snap_m": round(snap_g, 1)},
+            "distance_m": round(fallback_distance, 1),
+            "shortest_m": round(shortest, 1),
+            "max_distance_m": round(max_distance, 1),
+            "score": 0.0,
+            "score_per_km": 0.0,
+            "expanded_labels": expanded,
+            "coordinates": coordinates,
+            "criteria": {},
+            "fallback": True,
+        }
 
     node_ids = reconstruct(labels, best_goal)
     coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in node_ids]
@@ -171,3 +188,30 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35):
         "coordinates": coordinates,
         "criteria": {k: round(v, 2) for k, v in sorted(contributions.items(), key=lambda kv: -abs(kv[1])) if abs(v) > 0.001},
     }
+
+
+def shortest_distance_route(graph, start, goal):
+    q = [(0.0, start)]
+    best = {start: 0.0}
+    parent = {start: None}
+    while q:
+        d, u = heapq.heappop(q)
+        if d != best.get(u):
+            continue
+        if u == goal:
+            break
+        for edge in graph["adj"].get(u, []):
+            v = edge["to"]
+            nd = d + edge["dist"]
+            if nd < best.get(v, float("inf")):
+                best[v] = nd
+                parent[v] = u
+                heapq.heappush(q, (nd, v))
+    if goal not in best:
+        return None
+    path = []
+    u = goal
+    while u is not None:
+        path.append(u)
+        u = parent[u]
+    return list(reversed(path)), best[goal]
