@@ -13,6 +13,12 @@ input[type=range]{width:100%}input[type=range]:disabled{opacity:.4}
 .buttons{display:flex;gap:8px;margin-top:14px}button{flex:1;border:0;border-radius:8px;padding:11px;cursor:pointer;font-weight:600}
 #build{background:#e8e8e8;color:#111}#clear{background:#303030;color:#eee}
 button:disabled{opacity:.45;cursor:default}.hint{color:#aaa;font-size:13px;line-height:1.4;margin:12px 0 18px}
+.route-legend{display:flex;flex-direction:column;gap:5px;margin:10px 0 18px;color:#999;font-size:11px}
+.route-legend span{display:flex;align-items:center;gap:7px}
+.legend-line{display:inline-block;width:24px;height:4px;border-radius:2px}
+.legend-line.yellow{background:#ffad1f}
+.legend-line.green{background:#42d56b}
+.legend-line.red{background:#ff4d4d}
 .result{border-top:1px solid #333;padding-top:16px}.result>div{display:flex;justify-content:space-between;padding:6px 0;gap:10px}
 .result span{color:#999}h2{font-size:15px;margin:18px 0 10px}.crit{display:flex;justify-content:space-between;padding:4px 0;font-size:13px}
 .crit .name{color:#bbb;max-width:220px}.plus{color:#80d080}.minus{color:#ff8181}.hidden{display:none}
