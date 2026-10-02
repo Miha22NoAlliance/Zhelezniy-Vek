@@ -4,10 +4,27 @@ import heapq
 import math
 from collections import defaultdict, deque
 
-MAX_LABELS_PER_NODE = 64
-MAX_TOTAL_LABELS = 500_000
 _COMPONENT_CACHE = {}
 
+ROAD_FACTORS_SIMPLE = {
+    "trunk": 0.90,
+    "trunk_link": 0.94,
+    "primary": 0.92,
+    "primary_link": 0.95,
+    "secondary": 0.95,
+    "secondary_link": 0.98,
+    "tertiary": 0.98,
+    "tertiary_link": 1.00,
+    "residential": 1.00,
+    "living_street": 1.01,
+    "pedestrian": 1.00,
+    "cycleway": 1.08,
+    "service": 1.18,
+    "footway": 1.24,
+    "path": 1.30,
+    "track": 1.38,
+    "steps": 1.62,
+}
 
 def haversine(a, b):
     lat1, lon1 = a
@@ -107,62 +124,81 @@ def shortest_path(graph, start, goal):
     return list(reversed(ids)), best[goal]
 
 
+def _find_edge(graph, a, b):
+    for edge in graph["adj"].get(a, ()):
+        if edge["to"] == b:
+            return edge
+    return None
+
+
 def path_score(graph, node_ids):
     total = 0.0
     criteria = defaultdict(float)
+    ascent = 0.0
+    descent = 0.0
+    stairs = 0
+
     for a, b in zip(node_ids, node_ids[1:]):
-        edge = next((e for e in graph["adj"].get(a, ()) if e["to"] == b), None)
+        edge = _find_edge(graph, a, b)
         if edge is None:
             continue
         total += edge["score"]
         for k, v in edge["criteria"].items():
             criteria[k] += v
-    return total, criteria
+
+        delta = edge.get("elevation_delta_m")
+        if delta is not None:
+            if delta > 0:
+                ascent += delta
+            elif delta < 0:
+                descent += -delta
+        if edge.get("stairs"):
+            stairs += 1
+
+    return total, criteria, ascent, descent, stairs
 
 
-def _contains_ancestor(labels, label_id, node_id):
-    cur = label_id
-    while cur is not None:
-        if labels[cur][0] == node_id:
-            return True
-        cur = labels[cur][4]
-    return False
+def _simple_edge_cost(graph, u, edge, goal, quality_weight):
+    dist = max(edge["dist"], 1.0)
+    factor = ROAD_FACTORS_SIMPLE.get(edge.get("highway", ""), 1.06)
+
+    # Упрощённый режим сильнее ценит непрерывные главные улицы и слабее
+    # поощряет узкие местные проходы/дворы.
+    before = haversine((graph["nodes"][u][0], graph["nodes"][u][1]), goal)
+    v = edge["to"]
+    after = haversine((graph["nodes"][v][0], graph["nodes"][v][1]), goal)
+    progress = before - after
+    progress_ratio = progress / dist
+
+    if progress_ratio < 0:
+        factor *= 1.0 + min(1.8, -progress_ratio * 1.35)
+    elif progress_ratio < 0.35:
+        factor *= 1.0 + (0.35 - progress_ratio) * 0.32
+
+    delta = edge.get("elevation_delta_m")
+    if delta is not None:
+        uphill = max(0.0, delta)
+        downhill = max(0.0, -delta)
+        factor *= 1.0 + min(1.2, uphill / 28.0)
+        factor *= 1.0 + min(0.35, downhill / 90.0)
+
+    if edge.get("stairs"):
+        factor *= 1.35
+
+    ratio = edge.get("score", 0.0) / dist
+    exponent = max(-4.0, min(4.0, -quality_weight * ratio))
+    factor *= math.exp(exponent)
+    return dist * factor
 
 
-def _insert_label(labels, active, by_node, node, dist, score, lid):
-    candidates = by_node[node]
-    for old_id in candidates:
-        if old_id not in active:
-            continue
-        old = labels[old_id]
-        if old[2] <= dist and old[1] >= score and (old[2] < dist or old[1] > score):
-            return False
-
-    doomed = []
-    for old_id in candidates:
-        if old_id not in active:
-            continue
-        old = labels[old_id]
-        if dist <= old[2] and score >= old[1] and (dist < old[2] or score > old[1]):
-            doomed.append(old_id)
-
-    for old_id in doomed:
-        active.discard(old_id)
-    by_node[node] = [x for x in candidates if x in active]
-    by_node[node].append(lid)
-    active.add(lid)
-
-    if len(by_node[node]) > MAX_LABELS_PER_NODE:
-        ranked = sorted(by_node[node], key=lambda x: (-labels[x][1], labels[x][2]))
-        keep = set(ranked[:MAX_LABELS_PER_NODE])
-        for old_id in by_node[node]:
-            if old_id not in keep:
-                active.discard(old_id)
-        by_node[node] = ranked[:MAX_LABELS_PER_NODE]
-    return True
+def _quality_edge_cost(edge, quality_weight):
+    dist = max(edge["dist"], 1.0)
+    ratio = edge.get("score", 0.0) / dist
+    exponent = max(-5.0, min(5.0, -quality_weight * ratio))
+    return dist * math.exp(exponent)
 
 
-def _weighted_path(graph, start, goal, quality_weight):
+def _weighted_path(graph, start, goal, quality_weight, mode):
     q = [(0.0, 0.0, start)]
     best = {start: 0.0}
     distance = {start: 0.0}
@@ -179,25 +215,23 @@ def _weighted_path(graph, start, goal, quality_weight):
             break
 
         for edge in graph["adj"].get(u, ()):
-            edge_dist = edge["dist"]
-            edge_score = edge["score"]
+            if mode == "simple":
+                edge_cost = _simple_edge_cost(
+                    graph, u, edge,
+                    (graph["nodes"][goal][0], graph["nodes"][goal][1]),
+                    quality_weight,
+                )
+            else:
+                edge_cost = _quality_edge_cost(edge, quality_weight)
 
-            # Positive edge cost keeps Dijkstra valid and prevents cycles.
-            # Higher quality_weight increasingly prefers edges with better
-            # score per metre, while negative scores are naturally penalized.
-            ratio = edge_score / max(edge_dist, 1.0)
-            exponent = max(-20.0, min(20.0, -quality_weight * ratio))
-            edge_cost = edge_dist * math.exp(exponent)
-
-            new_dist = dist_so_far + edge_dist
-            new_cost = cost + edge_cost
             v = edge["to"]
-
-            if new_cost < best.get(v, float("inf")) - 1e-9:
-                best[v] = new_cost
-                distance[v] = new_dist
+            nd = dist_so_far + edge["dist"]
+            nc = cost + edge_cost
+            if nc < best.get(v, float("inf")) - 1e-9:
+                best[v] = nc
+                distance[v] = nd
                 parent[v] = u
-                heapq.heappush(q, (new_cost, new_dist, v))
+                heapq.heappush(q, (nc, nd, v))
 
     if goal not in distance:
         return None
@@ -212,8 +246,8 @@ def _weighted_path(graph, start, goal, quality_weight):
     return node_ids, distance[goal], expanded
 
 
-def _route_candidate(graph, start, goal, max_distance, quality_weight):
-    result = _weighted_path(graph, start, goal, quality_weight)
+def _route_candidate(graph, start, goal, max_distance, quality_weight, mode):
+    result = _weighted_path(graph, start, goal, quality_weight, mode)
     if result is None:
         return None
 
@@ -221,84 +255,89 @@ def _route_candidate(graph, start, goal, max_distance, quality_weight):
     if distance_m > max_distance + 1e-6:
         return None
 
-    score, criteria = path_score(graph, node_ids)
+    score, criteria, ascent, descent, stairs = path_score(graph, node_ids)
+    simple_cost = 0.0
+    goal_point = (graph["nodes"][goal][0], graph["nodes"][goal][1])
+    for a, b in zip(node_ids, node_ids[1:]):
+        edge = _find_edge(graph, a, b)
+        if edge is not None:
+            simple_cost += _simple_edge_cost(graph, a, edge, goal_point, 0.0)
+
     return {
         "node_ids": node_ids,
         "distance_m": distance_m,
         "score": score,
         "criteria": criteria,
         "expanded": expanded,
-        "quality_weight": quality_weight,
+        "ascent": ascent,
+        "descent": descent,
+        "stairs": stairs,
+        "simple_cost": simple_cost,
     }
 
 
-def find_route(graph, start_point, goal_point, detour_factor=1.35):
+def find_route(graph, start_point, goal_point, detour_factor=1.35, mode="quality"):
+    mode = "simple" if str(mode).lower() in {"simple", "simplified"} else "quality"
+
     start, goal, snap_s, snap_g = choose_endpoints(graph, start_point, goal_point)
     shortest = shortest_path(graph, start, goal)
     if shortest is None:
         raise ValueError("Между выбранными точками нет пешеходного пути")
 
     shortest_ids, shortest_m = shortest
-    detour_factor = max(1.0, min(float(detour_factor), 2.5))
+    detour_factor = max(1.0, min(float(detour_factor), 1.8))
     max_distance = shortest_m * detour_factor
 
     if detour_factor <= 1.00001:
-        total_score, criteria = path_score(graph, shortest_ids)
+        total_score, criteria, ascent, descent, stairs = path_score(graph, shortest_ids)
         coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in shortest_ids]
         return _result(
             start_point, goal_point, snap_s, snap_g,
             shortest_m, shortest_m, total_score, criteria,
-            coordinates, len(shortest_ids), False, max_distance
+            coordinates, len(shortest_ids), False, max_distance,
+            mode, ascent, descent, stairs
         )
 
-    # Search a small, logarithmically spaced family of quality-biased paths.
-    # Every path is produced by Dijkstra with positive edge costs, so there
-    # are no repeated points and runtime is far smaller than the old
-    # multi-label search.
+    if mode == "simple":
+        search_weights = [0.0, 1.0, 2.5, 5.0, 9.0, 15.0, 24.0]
+    else:
+        # Более агрессивно исследуем хорошие альтернативы, но каждая серия
+        # остаётся обычным Dijkstra и не взрывается сотнями тысяч меток.
+        search_weights = [0.0, 4.0, 10.0, 20.0, 40.0, 80.0, 140.0, 220.0, 340.0]
+
     candidates = []
-
-    weights = [0.0]
-    w = 0.25
-    while w <= 64.0:
-        weights.append(w)
-        w *= 1.65
-
-    detour_bias = max(0.0, detour_factor - 1.0)
-    weights += [
-        4.0 * detour_bias,
-        8.0 * detour_bias,
-        16.0 * detour_bias,
-        32.0 * detour_bias,
-    ]
-
-    seen_weights = set()
-    for quality_weight in sorted(weights):
-        key = round(quality_weight, 6)
-        if key in seen_weights:
+    seen = set()
+    for quality_weight in search_weights:
+        if quality_weight in seen:
             continue
-        seen_weights.add(key)
-
+        seen.add(quality_weight)
         candidate = _route_candidate(
-            graph, start, goal, max_distance, quality_weight
+            graph, start, goal, max_distance,
+            quality_weight, mode
         )
         if candidate is not None:
             candidates.append(candidate)
 
     if not candidates:
-        total_score, criteria = path_score(graph, shortest_ids)
+        total_score, criteria, ascent, descent, stairs = path_score(graph, shortest_ids)
         coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in shortest_ids]
         return _result(
             start_point, goal_point, snap_s, snap_g,
             shortest_m, shortest_m, total_score, criteria,
-            coordinates, 0, True, max_distance
+            coordinates, 0, True, max_distance,
+            mode, ascent, descent, stairs
         )
 
-    # Pick the highest-scoring valid path. Prefer the shorter one only when
-    # scores are effectively identical.
-    best = max(
-        candidates,
-        key=lambda c: (c["score"], -c["distance_m"])
-    )
+    if mode == "simple":
+        best = min(
+            candidates,
+            key=lambda c: (c["simple_cost"], -c["score"], c["distance_m"])
+        )
+    else:
+        best = max(
+            candidates,
+            key=lambda c: (c["score"], -c["distance_m"])
+        )
 
     node_ids = best["node_ids"]
     coordinates = [[graph["nodes"][nid][0], graph["nodes"][nid][1]] for nid in node_ids]
@@ -307,11 +346,15 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35):
         start_point, goal_point, snap_s, snap_g,
         best["distance_m"], shortest_m,
         best["score"], best["criteria"], coordinates,
-        best["expanded"], False, max_distance
+        best["expanded"], False, max_distance,
+        mode, best["ascent"], best["descent"], best["stairs"]
     )
 
+
 def _result(start_point, goal_point, snap_s, snap_g, distance_m, shortest_m,
-            score, criteria, coordinates, expanded, fallback, max_distance=None):
+            score, criteria, coordinates, expanded, fallback,
+            max_distance=None, mode="quality", ascent=0.0, descent=0.0,
+            stairs=0):
     if max_distance is None:
         max_distance = distance_m
     return {
@@ -324,7 +367,17 @@ def _result(start_point, goal_point, snap_s, snap_g, distance_m, shortest_m,
         "score_per_km": round(score / max(distance_m / 1000.0, 0.001), 2),
         "expanded_labels": expanded,
         "coordinates": coordinates,
-        "criteria": {k: round(v, 2) for k, v in sorted(criteria.items(), key=lambda kv: -abs(kv[1])) if abs(v) > 0.001},
+        "criteria": {
+            k: round(v, 2)
+            for k, v in sorted(criteria.items(), key=lambda kv: -abs(kv[1]))
+            if abs(v) > 0.001
+        },
+        "mode": mode,
+        "ascent_m": round(ascent, 1),
+        "descent_m": round(descent, 1),
+        "stairs_count": stairs,
         "fallback": fallback,
-        "repeated_points": len(coordinates) - len({(round(p[0], 7), round(p[1], 7)) for p in coordinates}),
+        "repeated_points": len(coordinates) - len({
+            (round(p[0], 7), round(p[1], 7)) for p in coordinates
+        }),
     }
