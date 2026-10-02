@@ -304,6 +304,31 @@ def _weighted_path(graph, start, goal, quality_weight, mode, max_distance=None):
     return node_ids, distance[goal], expanded
 
 
+def _crossing_counts(graph, node_ids):
+    crossings = 0
+    signals = 0
+    for nid in node_ids:
+        flags = graph.get("node_flags", {}).get(str(nid), {})
+        if flags.get("crossing"):
+            crossings += 1
+        if flags.get("traffic_signals"):
+            signals += 1
+    return crossings, signals
+
+
+def _aggressive_utility(candidate, shortest_m):
+    extra_km = max(0.0, (candidate["distance_m"] - shortest_m) / 1000.0)
+    shortest_km = max(shortest_m / 1000.0, 0.001)
+    density = candidate["score"] / max(candidate["distance_m"] / 1000.0, 0.001)
+    normalized_quality = density * shortest_km
+    return (
+        normalized_quality
+        - 6.5 * extra_km
+        - 8.0 * extra_km * extra_km
+        - 1.6 * candidate.get("crossings", 0)
+    )
+
+
 def _route_candidate(graph, start, goal, max_distance, quality_weight, mode):
     result = _weighted_path(graph, start, goal, quality_weight, mode, max_distance)
     if result is None:
@@ -314,6 +339,8 @@ def _route_candidate(graph, start, goal, max_distance, quality_weight, mode):
         return None
 
     score, criteria, ascent, descent, stairs = path_score(graph, node_ids)
+    crossing_count, signal_count = _crossing_counts(graph, node_ids)
+
     simple_cost = 0.0
     goal_point = (graph["nodes"][goal][0], graph["nodes"][goal][1])
     for a, b in zip(node_ids, node_ids[1:]):
@@ -330,6 +357,8 @@ def _route_candidate(graph, start, goal, max_distance, quality_weight, mode):
         "ascent": ascent,
         "descent": descent,
         "stairs": stairs,
+        "crossings": crossing_count,
+        "signals": signal_count,
         "simple_cost": simple_cost,
         "fallback": False,
     }
@@ -343,6 +372,10 @@ def _search_weights(mode, automatic):
         if automatic:
             return [0.0, 5.0, 12.0, 24.0, 45.0, 68.0]
         return [0.0, 1.0, 2.5, 5.0, 9.0, 15.0, 24.0, 36.0, 52.0, 72.0]
+    if mode == "aggressive":
+        if automatic:
+            return [0.0, 18.0, 40.0, 80.0, 160.0, 300.0, 500.0, 750.0]
+        return [0.0, 4.0, 10.0, 20.0, 40.0, 80.0, 140.0, 220.0, 340.0, 520.0, 780.0, 1100.0]
     if automatic:
         return [0.0, 25.0, 75.0, 150.0, 300.0, 600.0]
     return [0.0, 4.0, 10.0, 20.0, 40.0, 80.0, 140.0, 220.0, 340.0, 520.0, 780.0, 1100.0]
@@ -361,6 +394,8 @@ def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
             "ascent": ascent,
             "descent": descent,
             "stairs": stairs,
+            "crossings": _crossing_counts(graph, shortest_ids)[0],
+            "signals": _crossing_counts(graph, shortest_ids)[1],
             "simple_cost": shortest_m,
             "fallback": False,
         }
@@ -385,6 +420,8 @@ def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
             "ascent": ascent,
             "descent": descent,
             "stairs": stairs,
+            "crossings": _crossing_counts(graph, shortest_ids)[0],
+            "signals": _crossing_counts(graph, shortest_ids)[1],
             "simple_cost": shortest_m,
             "fallback": True,
         }
@@ -393,6 +430,15 @@ def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
     # distance budget by score per kilometre. This is independent of whether
     # the underlying route style is quality-oriented or simplified.
     if automatic:
+        if mode == "aggressive":
+            return max(
+                candidates,
+                key=lambda c: (
+                    _aggressive_utility(c, shortest_m),
+                    c["score"],
+                    -c["distance_m"],
+                ),
+            )
         return max(
             candidates,
             key=lambda c: (
@@ -408,12 +454,28 @@ def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
             key=lambda c: (c["simple_cost"], -c["score"], c["distance_m"])
         )
 
+    if mode == "aggressive":
+        return max(
+            candidates,
+            key=lambda c: (
+                _aggressive_utility(c, shortest_m),
+                c["score"],
+                -c["distance_m"],
+            ),
+        )
+
     return max(candidates, key=lambda c: (c["score"], -c["distance_m"]))
 
 
 def find_route(graph, start_point, goal_point, detour_factor=1.35,
                mode="quality", automatic=False):
-    mode = "simple" if str(mode).lower() in {"simple", "simplified"} else "quality"
+    mode_value = str(mode).lower()
+    if mode_value in {"simple", "simplified"}:
+        mode = "simple"
+    elif mode_value in {"aggressive", "quality_aggressive"}:
+        mode = "aggressive"
+    else:
+        mode = "quality"
 
     start, goal, snap_s, snap_g = choose_endpoints(graph, start_point, goal_point)
     shortest = shortest_path(graph, start, goal)
@@ -468,6 +530,7 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35,
             best["expanded"], best["fallback"],
             shortest_m * selected_factor,
             mode, best["ascent"], best["descent"], best["stairs"],
+            best.get("crossings", 0), best.get("signals", 0),
             selected_factor, True, tested, _segment_styles(graph, node_ids)
         )
 
@@ -490,6 +553,7 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35,
         best["score"], best["criteria"], coordinates,
         best["expanded"], best["fallback"], max_distance,
         mode, best["ascent"], best["descent"], best["stairs"],
+        best.get("crossings", 0), best.get("signals", 0),
         detour_factor, False, None, _segment_styles(graph, node_ids)
     )
 
@@ -542,7 +606,8 @@ def _segment_styles(graph, node_ids):
 def _result(start_point, goal_point, snap_s, snap_g, distance_m, shortest_m,
             score, criteria, coordinates, expanded, fallback,
             max_distance=None, mode="quality", ascent=0.0, descent=0.0,
-            stairs=0, selected_detour=1.0, automatic=False, tested_detours=None,
+            stairs=0, crossings=0, signals=0,
+            selected_detour=1.0, automatic=False, tested_detours=None,
             segments=None):
     if max_distance is None:
         max_distance = distance_m
@@ -565,6 +630,8 @@ def _result(start_point, goal_point, snap_s, snap_g, distance_m, shortest_m,
         "ascent_m": round(ascent, 1),
         "descent_m": round(descent, 1),
         "stairs_count": stairs,
+        "crossings_count": int(crossings),
+        "signal_crossings_count": int(signals),
         "selected_detour_pct": round(selected_detour * 100),
         "automatic": automatic,
         "tested_detours": tested_detours,
