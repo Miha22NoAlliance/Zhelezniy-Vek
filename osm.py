@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from routing import haversine
@@ -164,10 +165,15 @@ def build_or_load_graph(path: Path):
 );
 out body geom;'''
 
+    form = urlencode({"data": query}).encode("utf-8")
     req = Request(
         OVERPASS,
-        data=query.encode(),
-        headers={"User-Agent": "WalkRoute-Demo/0.1", "Content-Type": "application/x-www-form-urlencoded"},
+        data=form,
+        headers={
+            "User-Agent": "WalkRoute-Demo/0.1",
+            "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        },
+        method="POST",
     )
     with urlopen(req, timeout=180) as response:
         raw = json.loads(response.read().decode("utf-8"))
