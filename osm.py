@@ -10,7 +10,7 @@ from routing import haversine
 
 LIPETSK_BBOX = (52.5320, 39.4596, 52.6457, 39.7153)
 PBF_FILENAME = "planet_39.4596,52.532_39.7153,52.6457.osm.pbf"
-GRAPH_SCHEMA = 3
+GRAPH_SCHEMA = 4
 EXCLUDE = {"motorway", "motorway_link", "construction", "proposed", "raceway"}
 GRID_LAT, GRID_LON = 0.01, 0.015
 
@@ -194,25 +194,60 @@ def _node(data, strings, granularity, lat_off, lon_off):
 
 
 def _dense(data, strings, granularity, lat_off, lon_off):
-    ids = _vals(data,1,True); lats = _vals(data,8,True); lons = _vals(data,9,True); kv = _vals(data,10)
-    for arr in (ids,lats,lons):
-        s=0
-        for i,v in enumerate(arr): s += v; arr[i]=s
-    tagged=[]; p=0
+    raw_ids = _vals(data, 1, signed=True)
+    raw_lats = _vals(data, 8, signed=True)
+    raw_lons = _vals(data, 9, signed=True)
+    raw_tags = _vals(data, 10, signed=False)
+
+    ids = []
+    acc = 0
+    for value in raw_ids:
+        acc += value
+        ids.append(acc)
+
+    lats = []
+    acc = 0
+    for value in raw_lats:
+        acc += value
+        lats.append(acc)
+
+    lons = []
+    acc = 0
+    for value in raw_lons:
+        acc += value
+        lons.append(acc)
+
+    # DenseNodes.keys_vals: пары string-table indexes,
+    # завершение тегов каждого узла обозначается нулевым key.
+    tags_by_node = []
+    pos = 0
     for _ in ids:
-        t={}
-        while p < len(kv):
-            k=kv[p]; p+=1
-            if k == 0: break
-            if p >= len(kv): break
-            v=kv[p]; p+=1
-            if 0 <= k < len(strings) and 0 <= v < len(strings): t[strings[k]]=strings[v]
-        tagged.append(t)
-    out=[]
-    for i in range(min(len(ids),len(lats),len(lons))):
-        out.append((ids[i],1e-9*(lat_off+granularity*lats[i]),1e-9*(lon_off+granularity*lons[i]),
-                    tagged[i] if i < len(tagged) else {}))
-    return out
+        tags = {}
+        while pos < len(raw_tags):
+            key_index = raw_tags[pos]
+            pos += 1
+            if key_index == 0:
+                break
+            if pos >= len(raw_tags):
+                break
+            value_index = raw_tags[pos]
+            pos += 1
+            if 0 <= key_index < len(strings) and 0 <= value_index < len(strings):
+                tags[strings[key_index]] = strings[value_index]
+        tags_by_node.append(tags)
+
+    result = []
+    count = min(len(ids), len(lats), len(lons))
+    for i in range(count):
+        lat = 1e-9 * (lat_off + granularity * lats[i])
+        lon = 1e-9 * (lon_off + granularity * lons[i])
+        result.append((
+            ids[i],
+            lat,
+            lon,
+            tags_by_node[i] if i < len(tags_by_node) else {},
+        ))
+    return result
 
 
 def _way(data, strings):
