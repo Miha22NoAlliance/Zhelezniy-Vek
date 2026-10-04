@@ -4,7 +4,11 @@ import heapq
 import math
 from collections import defaultdict, deque
 
-from simple_mode_v2 import weighted_path as _simple_v2_weighted_path, path_cost as _simple_v2_path_cost
+from simple_mode_v2 import (
+    weighted_path as _simple_v2_weighted_path,
+    path_cost as _simple_v2_path_cost,
+    path_metrics as _simple_v2_path_metrics,
+)
 
 _COMPONENT_CACHE = {}
 
@@ -100,22 +104,31 @@ def choose_endpoints(graph, start_point, goal_point):
 
 
 def shortest_path(graph, start, goal):
-    q = [(0.0, start)]
+    """Exact shortest-distance path using A* with haversine heuristic."""
+    sequence = 0
+    start_point = (graph["nodes"][start][0], graph["nodes"][start][1])
+    goal_point = (graph["nodes"][goal][0], graph["nodes"][goal][1])
+    q = [(haversine(start_point, goal_point), 0.0, sequence, start)]
     best = {start: 0.0}
     parent = {start: None}
+
     while q:
-        d, u = heapq.heappop(q)
-        if d != best.get(u):
+        _, distance, _, u = heapq.heappop(q)
+        if distance > best.get(u, float("inf")) + 1e-9:
             continue
         if u == goal:
             break
         for edge in graph["adj"].get(u, ()):
             v = edge["to"]
-            nd = d + edge["dist"]
-            if nd < best.get(v, float("inf")):
+            nd = distance + edge["dist"]
+            if nd < best.get(v, float("inf")) - 1e-9:
                 best[v] = nd
                 parent[v] = u
-                heapq.heappush(q, (nd, v))
+                sequence += 1
+                point = (graph["nodes"][v][0], graph["nodes"][v][1])
+                heuristic = haversine(point, goal_point)
+                heapq.heappush(q, (nd + heuristic, nd, sequence, v))
+
     if goal not in best:
         return None
     ids = []
@@ -383,6 +396,7 @@ def _route_candidate(graph, start, goal, max_distance, quality_weight, mode):
         "crossings": crossing_count,
         "signals": signal_count,
         "simple_cost": simple_cost,
+        "simple_metrics": _simple_v2_path_metrics(graph, node_ids) if mode == "simple_v2" else {},
         "fallback": False,
     }
 
@@ -420,6 +434,7 @@ def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
             "crossings": _crossing_counts(graph, shortest_ids)[0],
             "signals": _crossing_counts(graph, shortest_ids)[1],
             "simple_cost": shortest_m,
+            "simple_metrics": _simple_v2_path_metrics(graph, shortest_ids) if mode == "simple_v2" else {},
             "fallback": False,
         }
 
@@ -446,6 +461,7 @@ def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
             "crossings": _crossing_counts(graph, shortest_ids)[0],
             "signals": _crossing_counts(graph, shortest_ids)[1],
             "simple_cost": shortest_m,
+            "simple_metrics": _simple_v2_path_metrics(graph, shortest_ids) if mode == "simple_v2" else {},
             "fallback": True,
         }
 
@@ -563,7 +579,8 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35,
             shortest_m * selected_factor,
             mode, best["ascent"], best["descent"], best["stairs"],
             best.get("crossings", 0), best.get("signals", 0),
-            selected_factor, True, tested, _segment_styles(graph, node_ids)
+            selected_factor, True, tested, _segment_styles(graph, node_ids),
+            best.get("simple_metrics", {})
         )
 
     detour_factor = max(1.0, min(float(detour_factor), 1.8))
@@ -586,7 +603,8 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35,
         best["expanded"], best["fallback"], max_distance,
         mode, best["ascent"], best["descent"], best["stairs"],
         best.get("crossings", 0), best.get("signals", 0),
-        detour_factor, False, None, _segment_styles(graph, node_ids)
+        detour_factor, False, None, _segment_styles(graph, node_ids),
+        best.get("simple_metrics", {})
     )
 
 def _segment_styles(graph, node_ids):
@@ -640,7 +658,7 @@ def _result(start_point, goal_point, snap_s, snap_g, distance_m, shortest_m,
             max_distance=None, mode="quality", ascent=0.0, descent=0.0,
             stairs=0, crossings=0, signals=0,
             selected_detour=1.0, automatic=False, tested_detours=None,
-            segments=None):
+            segments=None, simple_metrics=None):
     if max_distance is None:
         max_distance = distance_m
     return {
@@ -668,6 +686,7 @@ def _result(start_point, goal_point, snap_s, snap_g, distance_m, shortest_m,
         "automatic": automatic,
         "tested_detours": tested_detours,
         "segments": segments if segments is not None else [],
+        "simple_metrics": simple_metrics if simple_metrics is not None else {},
         "fallback": fallback,
         "repeated_points": len(coordinates) - len({
             (round(p[0], 7), round(p[1], 7)) for p in coordinates
