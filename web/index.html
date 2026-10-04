@@ -9,6 +9,11 @@
 <h1>WalkRoute</h1>
 <div class="sub">Собственный алгоритм пешеходной маршрутизации</div>
 <div id="status" class="status">Загрузка локальных данных…</div>
+<div id="searchPanel" class="search-panel hidden">
+  <div class="search-title"><b id="searchPhase">Поиск маршрута</b><span id="searchExpanded">0 узлов</span></div>
+  <div class="search-track"><div id="searchProgress"></div></div>
+  <div id="searchHint" class="search-hint">Поиск идёт по локальному графу</div>
+</div>
 <label class="auto-row"><input id="autoDetour" type="checkbox" checked> Автоматически подобрать объезд 110–180%</label>
 <div class="mode-row"><label for="routeMode">Режим маршрута</label>
 <select id="routeMode">
