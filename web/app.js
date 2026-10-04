@@ -273,6 +273,7 @@ async function pollRouteJob(){
     }
     if(searchState.visited.length>9000)searchState.visited.splice(0,searchState.visited.length-9000);
     searchState.current=data.current||searchState.current;
+    searchState.expanded=Math.max(searchState.expanded,data.expanded||0);
     updateSearchUi();draw();
     if(data.done){
       searchState.active=false;
