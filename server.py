@@ -53,6 +53,8 @@ def _start_route_job(graph, start_point, goal_point, detour, mode, automatic):
             "done": False,
             "phase": "queued",
             "expanded": 0,
+            "phase_expanded": 0,
+            "last_phase": None,
             "events": [],
             "next_seq": 0,
             "result": None,
@@ -74,8 +76,14 @@ def _start_route_job(graph, start_point, goal_point, detour, mode, automatic):
             if job is None:
                 return
             job["updated_at"] = time.time()
+            current_expanded = int(expanded or 0)
+            if phase != job["last_phase"]:
+                job["last_phase"] = phase
+                job["phase_expanded"] = 0
+            delta = max(0, current_expanded - job["phase_expanded"])
+            job["phase_expanded"] = current_expanded
             job["phase"] = phase
-            job["expanded"] = max(job["expanded"], int(expanded or 0))
+            job["expanded"] += delta
             job["current"] = current_point
             job["next_seq"] += 1
             job["events"].append({
