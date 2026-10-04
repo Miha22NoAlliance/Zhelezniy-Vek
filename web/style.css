@@ -25,3 +25,10 @@ button:disabled{opacity:.45;cursor:default}.hint{color:#aaa;font-size:13px;line-
 .footer{color:#666;font-size:11px;margin-top:18px;line-height:1.4}
 #map-wrap{flex:1;min-width:0;height:100%;position:relative}#map{display:block;width:100%;height:100%;cursor:grab;touch-action:none}
 #map:active{cursor:grabbing}
+
+.search-panel{margin:-8px 0 14px;padding:10px 12px;background:#202327;border:1px solid #30343a;border-radius:8px}
+.search-title{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+.search-title span{color:#9aa0a7}
+.search-track{height:4px;margin:8px 0 7px;background:#2f3338;border-radius:4px;overflow:hidden}
+#searchProgress{height:100%;width:3%;background:#ffad1f;border-radius:4px;transition:width .15s linear}
+.search-hint{color:#8e949b;font-size:11px;line-height:1.3}
