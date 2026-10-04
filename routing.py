@@ -4,6 +4,8 @@ import heapq
 import math
 from collections import defaultdict, deque
 
+from simple_mode_v2 import weighted_path as _simple_v2_weighted_path, path_cost as _simple_v2_path_cost
+
 _COMPONENT_CACHE = {}
 
 ROAD_FACTORS_SIMPLE = {
@@ -261,6 +263,12 @@ def _quality_edge_cost(edge, quality_weight):
 
 
 def _weighted_path(graph, start, goal, quality_weight, mode, max_distance=None):
+    if mode == "simple_v2":
+        goal_point = (graph["nodes"][goal][0], graph["nodes"][goal][1])
+        return _simple_v2_weighted_path(
+            graph, start, goal, goal_point, quality_weight, max_distance
+        )
+
     q = [(0.0, 0.0, start)]
     best = {start: 0.0}
     distance = {start: 0.0}
@@ -353,12 +361,15 @@ def _route_candidate(graph, start, goal, max_distance, quality_weight, mode):
     score, criteria, ascent, descent, stairs = path_score(graph, node_ids)
     crossing_count, signal_count = _crossing_counts(graph, node_ids)
 
-    simple_cost = 0.0
     goal_point = (graph["nodes"][goal][0], graph["nodes"][goal][1])
-    for a, b in zip(node_ids, node_ids[1:]):
-        edge = _find_edge(graph, a, b)
-        if edge is not None:
-            simple_cost += _simple_edge_cost(graph, a, edge, goal_point, 0.0)
+    if mode == "simple_v2":
+        simple_cost = _simple_v2_path_cost(graph, node_ids, goal_point, quality_weight)
+    else:
+        simple_cost = 0.0
+        for a, b in zip(node_ids, node_ids[1:]):
+            edge = _find_edge(graph, a, b)
+            if edge is not None:
+                simple_cost += _simple_edge_cost(graph, a, edge, goal_point, 0.0)
 
     return {
         "node_ids": node_ids,
@@ -380,7 +391,7 @@ AUTO_DETOURS = tuple(round(x / 100.0, 2) for x in range(110, 181, 10))
 
 
 def _search_weights(mode, automatic):
-    if mode == "simple":
+    if mode in {"simple", "simple_v2"}:
         if automatic:
             return [0.0, 5.0, 12.0, 24.0, 45.0, 68.0]
         return [0.0, 1.0, 2.5, 5.0, 9.0, 15.0, 24.0, 36.0, 52.0, 72.0]
@@ -458,7 +469,7 @@ def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
             ),
         )
 
-    if mode == "simple":
+    if mode in {"simple", "simple_v2"}:
         return min(
             candidates,
             key=lambda c: (c["simple_cost"], -c["score"], c["distance_m"])
@@ -480,7 +491,9 @@ def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
 def find_route(graph, start_point, goal_point, detour_factor=1.35,
                mode="quality", automatic=False):
     mode_value = str(mode).lower()
-    if mode_value in {"simple", "simplified"}:
+    if mode_value in {"simple_v2", "simple-v2", "simple2"}:
+        mode = "simple_v2"
+    elif mode_value in {"simple", "simplified"}:
         mode = "simple"
     elif mode_value in {"aggressive", "quality_aggressive"}:
         mode = "aggressive"
