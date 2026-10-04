@@ -516,7 +516,6 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
                 "surface": tags.get("surface", ""),
                 "sidewalk": tags.get("sidewalk", ""),
                 "lanes": int(num(tags.get("lanes"), 0)),
-                "maxspeed": maxspeed,
             }
             edge={"to":sb,"dist":dist,"score":score,"criteria":contrib,**edge_meta}
             reverse={"to":sa,"dist":dist,"score":score,"criteria":contrib,**reverse_meta}
