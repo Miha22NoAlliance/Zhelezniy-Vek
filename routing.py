@@ -607,7 +607,8 @@ def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
 
 
 def find_route(graph, start_point, goal_point, detour_factor=1.35,
-               mode="quality", automatic=False, progress_callback=None):    mode_value = str(mode).lower()
+               mode="quality", automatic=False, progress_callback=None):
+    mode_value = str(mode).lower()
     if mode_value in {"simple_v2", "simple-v2", "simple2"}:
         mode = "simple_v2"
     elif mode_value in {"simple", "simplified"}:
