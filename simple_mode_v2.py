@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import heapq
 import math
+from itertools import count
 
 ROAD_FACTORS = {
     "trunk": 0.91, "trunk_link": 0.96,
@@ -97,7 +98,8 @@ def _edge_cost(graph, previous, current, edge, goal, quality_weight):
 def weighted_path(graph, start, goal, goal_point, quality_weight, max_distance=None):
     """Return (node_ids, physical_distance_m, expanded_labels), or None."""
     initial = (None, start)
-    queue = [(0.0, 0.0, initial)]
+    sequence = count()
+    queue = [(0.0, 0.0, next(sequence), initial)]
     best = {initial: 0.0}
     physical = {initial: 0.0}
     parent = {initial: None}
@@ -105,7 +107,7 @@ def weighted_path(graph, start, goal, goal_point, quality_weight, max_distance=N
     expanded = 0
 
     while queue:
-        cost, distance, state = heapq.heappop(queue)
+        cost, distance, _, state = heapq.heappop(queue)
         if cost > best.get(state, float("inf")) + 1e-9:
             continue
         previous, current = state
@@ -125,7 +127,7 @@ def weighted_path(graph, start, goal, goal_point, quality_weight, max_distance=N
                 best[next_state] = next_cost
                 physical[next_state] = next_distance
                 parent[next_state] = state
-                heapq.heappush(queue, (next_cost, next_distance, next_state))
+                heapq.heappush(queue, (next_cost, next_distance, next(sequence), next_state))
 
     if final is None:
         return None
