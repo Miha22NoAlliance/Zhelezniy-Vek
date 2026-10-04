@@ -504,7 +504,6 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
                 "surface": tags.get("surface", ""),
                 "sidewalk": tags.get("sidewalk", ""),
                 "lanes": int(num(tags.get("lanes"), 0)),
-                "maxspeed": maxspeed,
             }
             reverse_meta = {
                 "highway": tags.get("highway", ""),
