@@ -103,7 +103,7 @@ def choose_endpoints(graph, start_point, goal_point):
     return best[1], best[3], best[2], best[4]
 
 
-def shortest_path(graph, start, goal):
+def shortest_path(graph, start, goal, progress_callback=None):
     """Exact shortest-distance path using bidirectional A*."""
     if start == goal:
         return [start], 0.0
@@ -122,6 +122,8 @@ def shortest_path(graph, start, goal):
 
     best_total = float("inf")
     meet = None
+    expanded = 0
+    progress_batch = []
 
     while forward_q and backward_q:
         while forward_q and forward_q[0][1] > forward_best.get(forward_q[0][3], float("inf")) + 1e-9:
@@ -139,6 +141,13 @@ def shortest_path(graph, start, goal):
             _, distance, _, u = heapq.heappop(forward_q)
             if distance > forward_best.get(u, float("inf")) + 1e-9:
                 continue
+
+            expanded += 1
+            if progress_callback is not None:
+                progress_batch.append(u)
+                if len(progress_batch) >= 64:
+                    progress_callback("shortest", expanded, tuple(progress_batch), u, "forward")
+                    progress_batch.clear()
 
             if u in backward_best:
                 total = distance + backward_best[u]
@@ -163,6 +172,13 @@ def shortest_path(graph, start, goal):
             if distance > backward_best.get(u, float("inf")) + 1e-9:
                 continue
 
+            expanded += 1
+            if progress_callback is not None:
+                progress_batch.append(u)
+                if len(progress_batch) >= 64:
+                    progress_callback("shortest", expanded, tuple(progress_batch), u, "backward")
+                    progress_batch.clear()
+
             if u in forward_best:
                 total = distance + forward_best[u]
                 if total < best_total:
@@ -182,6 +198,8 @@ def shortest_path(graph, start, goal):
                     (nd + haversine(point, start_point), nd, sequence, v),
                 )
 
+    if progress_callback is not None and progress_batch:
+        progress_callback("shortest", expanded, tuple(progress_batch), meet, "mixed")
     if meet is None:
         return None
 
@@ -337,11 +355,14 @@ def _quality_edge_cost(edge, quality_weight):
     return dist * factor * math.exp(exponent)
 
 
-def _weighted_path(graph, start, goal, quality_weight, mode, max_distance=None):
+def _weighted_path(graph, start, goal, quality_weight, mode, max_distance=None,
+                   progress_callback=None, progress_phase=None):
     if mode == "simple_v2":
         goal_point = (graph["nodes"][goal][0], graph["nodes"][goal][1])
         return _simple_v2_weighted_path(
-            graph, start, goal, goal_point, quality_weight, max_distance
+            graph, start, goal, goal_point, quality_weight, max_distance,
+            progress_callback=progress_callback,
+            progress_phase=progress_phase or "candidate"
         )
 
     q = [(0.0, 0.0, start)]
@@ -349,6 +370,7 @@ def _weighted_path(graph, start, goal, quality_weight, mode, max_distance=None):
     distance = {start: 0.0}
     parent = {start: None}
     expanded = 0
+    progress_batch = []
 
     while q:
         cost, dist_so_far, u = heapq.heappop(q)
@@ -356,6 +378,12 @@ def _weighted_path(graph, start, goal, quality_weight, mode, max_distance=None):
             continue
 
         expanded += 1
+        if progress_callback is not None:
+            progress_batch.append(u)
+            if len(progress_batch) >= 64:
+                progress_callback(progress_phase or "candidate", expanded,
+                                  tuple(progress_batch), u, "forward")
+                progress_batch.clear()
         if u == goal:
             break
 
@@ -386,6 +414,9 @@ def _weighted_path(graph, start, goal, quality_weight, mode, max_distance=None):
                 parent[v] = u
                 heapq.heappush(q, (nc, nd, v))
 
+    if progress_callback is not None and progress_batch:
+        progress_callback(progress_phase or "candidate", expanded,
+                          tuple(progress_batch), goal, "forward")
     if goal not in distance:
         return None
 
@@ -424,8 +455,14 @@ def _aggressive_utility(candidate, shortest_m):
     )
 
 
-def _route_candidate(graph, start, goal, max_distance, quality_weight, mode):
-    result = _weighted_path(graph, start, goal, quality_weight, mode, max_distance)
+def _route_candidate(graph, start, goal, max_distance, quality_weight, mode,
+                      progress_callback=None):
+    phase = f"candidate · вес {quality_weight:g}"
+    result = _weighted_path(
+        graph, start, goal, quality_weight, mode, max_distance,
+        progress_callback=progress_callback,
+        progress_phase=phase
+    )
     if result is None:
         return None
 
@@ -481,7 +518,8 @@ def _search_weights(mode, automatic):
 
 
 def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
-                      max_distance, mode, automatic=False):
+                      max_distance, mode, automatic=False,
+                      progress_callback=None):
     if max_distance <= shortest_m + 1e-6:
         score, criteria, ascent, descent, stairs = path_score(graph, shortest_ids)
         return {
@@ -569,8 +607,7 @@ def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
 
 
 def find_route(graph, start_point, goal_point, detour_factor=1.35,
-               mode="quality", automatic=False):
-    mode_value = str(mode).lower()
+               mode="quality", automatic=False, progress_callback=None):    mode_value = str(mode).lower()
     if mode_value in {"simple_v2", "simple-v2", "simple2"}:
         mode = "simple_v2"
     elif mode_value in {"simple", "simplified"}:
@@ -581,7 +618,9 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35,
         mode = "quality"
 
     start, goal, snap_s, snap_g = choose_endpoints(graph, start_point, goal_point)
-    shortest = shortest_path(graph, start, goal)
+    if progress_callback is not None:
+        progress_callback("snap", 0, (), start, "forward")
+    shortest = shortest_path(graph, start, goal, progress_callback=progress_callback)
     if shortest is None:
         raise ValueError("Между выбранными точками нет пешеходного пути")
 
@@ -595,7 +634,8 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35,
             max_distance = shortest_m * factor
             candidate = _solve_for_budget(
                 graph, start, goal, shortest_ids, shortest_m,
-                max_distance, mode, automatic=True
+                max_distance, mode, automatic=True,
+                progress_callback=progress_callback
             )
             tested.append({
                 "detour_pct": round(factor * 100),
@@ -649,7 +689,8 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35,
     max_distance = shortest_m * detour_factor
     best = _solve_for_budget(
         graph, start, goal, shortest_ids, shortest_m,
-        max_distance, mode, automatic=False
+        max_distance, mode, automatic=False,
+        progress_callback=progress_callback
     )
 
     node_ids = best["node_ids"]
