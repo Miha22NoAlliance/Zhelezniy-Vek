@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import traceback
+import threading
+import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -20,6 +23,101 @@ PBF_PATH = DATA_DIR / PBF_FILENAME
 GRAPH = None
 MAP_DATA = None
 LOAD_ERROR = None
+
+ROUTE_JOBS = {}
+ROUTE_JOBS_LOCK = threading.Lock()
+MAX_ROUTE_JOBS = 16
+
+
+def _trim_route_jobs():
+    with ROUTE_JOBS_LOCK:
+        if len(ROUTE_JOBS) <= MAX_ROUTE_JOBS:
+            return
+        finished = sorted(
+            (job.get("updated_at", 0.0), job_id)
+            for job_id, job in ROUTE_JOBS.items()
+            if job.get("done")
+        )
+        for _, job_id in finished[:max(0, len(ROUTE_JOBS) - MAX_ROUTE_JOBS)]:
+            ROUTE_JOBS.pop(job_id, None)
+
+
+def _start_route_job(graph, start_point, goal_point, detour, mode, automatic):
+    job_id = uuid.uuid4().hex
+    now = time.time()
+    with ROUTE_JOBS_LOCK:
+        ROUTE_JOBS[job_id] = {
+            "id": job_id,
+            "created_at": now,
+            "updated_at": now,
+            "done": False,
+            "phase": "queued",
+            "expanded": 0,
+            "events": [],
+            "next_seq": 0,
+            "result": None,
+            "error": None,
+        }
+
+    def progress(phase, expanded, node_ids, current, direction):
+        points = []
+        for node_id in node_ids:
+            node = graph["nodes"].get(node_id)
+            if node is not None:
+                points.append([node[0], node[1], direction])
+        current_point = None
+        if current in graph["nodes"]:
+            node = graph["nodes"][current]
+            current_point = [node[0], node[1]]
+        with ROUTE_JOBS_LOCK:
+            job = ROUTE_JOBS.get(job_id)
+            if job is None:
+                return
+            job["updated_at"] = time.time()
+            job["phase"] = phase
+            job["expanded"] = max(job["expanded"], int(expanded or 0))
+            job["current"] = current_point
+            job["next_seq"] += 1
+            job["events"].append({
+                "seq": job["next_seq"],
+                "phase": phase,
+                "expanded": int(expanded or 0),
+                "direction": direction,
+                "points": points,
+            })
+            if len(job["events"]) > 240:
+                del job["events"][:-240]
+
+    def worker():
+        try:
+            result = find_route(
+                graph, start_point, goal_point,
+                detour, mode, automatic,
+                progress_callback=progress,
+            )
+            with ROUTE_JOBS_LOCK:
+                job = ROUTE_JOBS.get(job_id)
+                if job is not None:
+                    job["done"] = True
+                    job["phase"] = "done"
+                    job["updated_at"] = time.time()
+                    job["result"] = result
+        except Exception as exc:
+            traceback.print_exc()
+            with ROUTE_JOBS_LOCK:
+                job = ROUTE_JOBS.get(job_id)
+                if job is not None:
+                    job["done"] = True
+                    job["phase"] = "error"
+                    job["updated_at"] = time.time()
+                    job["error"] = str(exc)
+        finally:
+            _trim_route_jobs()
+
+    threading.Thread(
+        target=worker, name=f"route-{job_id[:8]}", daemon=True
+    ).start()
+    return job_id
 
 
 def ensure_data():
@@ -73,6 +171,58 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, map_data)
             except Exception as exc:
                 self._send(500, {"error": str(exc)})
+            return
+
+        if parsed.path == "/api/route/start":
+            try:
+                graph, _ = ensure_data()
+                q = parse_qs(parsed.query)
+                try:
+                    slat = float(q["slat"][0]); slon = float(q["slon"][0])
+                    glat = float(q["glat"][0]); glon = float(q["glon"][0])
+                except KeyError:
+                    self._send(400, {"error": "Не переданы координаты старта или финиша"})
+                    return
+                detour = float(q.get("detour", [1.35])[0])
+                mode = q.get("mode", ["quality"])[0]
+                automatic = q.get("auto", ["0"])[0].lower() in {"1", "true", "yes"}
+                job_id = _start_route_job(
+                    graph, (slat, slon), (glat, glon),
+                    detour, mode, automatic
+                )
+                self._send(200, {"job_id": job_id})
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+            except Exception as exc:
+                self._send(500, {"error": f"Внутренняя ошибка сервера: {exc}"})
+            return
+
+        if parsed.path == "/api/route/progress":
+            q = parse_qs(parsed.query)
+            job_id = q.get("id", [""])[0]
+            try:
+                since = max(0, int(q.get("since", ["0"])[0]))
+            except ValueError:
+                self._send(400, {"error": "Некорректный номер прогресса"})
+                return
+            with ROUTE_JOBS_LOCK:
+                job = ROUTE_JOBS.get(job_id)
+                if job is None:
+                    self._send(404, {"error": "Поиск маршрута не найден"})
+                    return
+                events = [event for event in job["events"] if event["seq"] > since]
+                payload = {
+                    "job_id": job_id,
+                    "done": job["done"],
+                    "phase": job["phase"],
+                    "expanded": job["expanded"],
+                    "current": job.get("current"),
+                    "next_seq": job["next_seq"],
+                    "events": events,
+                    "result": job["result"] if job["done"] and job["error"] is None else None,
+                    "error": job["error"],
+                }
+            self._send(200, payload)
             return
 
         if parsed.path == "/api/route":
@@ -144,7 +294,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     print("WalkRoute Demo — полностью офлайн")
-    print("Build: offline-pbf-v21-simple-v2")
+    print("Build: offline-pbf-v22-search-visualization")
     print(f"Server: {Path(__file__).resolve()}")
     print(f"OSM module: {Path(__import__('osm').__file__).resolve()}")
     print(f"PBF: data/{PBF_FILENAME}")
