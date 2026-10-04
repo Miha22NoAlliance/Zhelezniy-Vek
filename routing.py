@@ -104,39 +104,101 @@ def choose_endpoints(graph, start_point, goal_point):
 
 
 def shortest_path(graph, start, goal):
-    """Exact shortest-distance path using A* with haversine heuristic."""
-    sequence = 0
-    start_point = (graph["nodes"][start][0], graph["nodes"][start][1])
-    goal_point = (graph["nodes"][goal][0], graph["nodes"][goal][1])
-    q = [(haversine(start_point, goal_point), 0.0, sequence, start)]
-    best = {start: 0.0}
-    parent = {start: None}
+    """Exact shortest-distance path using bidirectional A*."""
+    if start == goal:
+        return [start], 0.0
 
-    while q:
-        _, distance, _, u = heapq.heappop(q)
-        if distance > best.get(u, float("inf")) + 1e-9:
-            continue
-        if u == goal:
+    goal_point = (graph["nodes"][goal][0], graph["nodes"][goal][1])
+    start_point = (graph["nodes"][start][0], graph["nodes"][start][1])
+
+    forward_best = {start: 0.0}
+    backward_best = {goal: 0.0}
+    forward_parent = {start: None}
+    backward_parent = {goal: None}
+
+    sequence = 0
+    forward_q = [(haversine(start_point, goal_point), 0.0, sequence, start)]
+    backward_q = [(haversine(goal_point, start_point), 0.0, sequence, goal)]
+
+    best_total = float("inf")
+    meet = None
+
+    while forward_q and backward_q:
+        while forward_q and forward_q[0][1] > forward_best.get(forward_q[0][3], float("inf")) + 1e-9:
+            heapq.heappop(forward_q)
+        while backward_q and backward_q[0][1] > backward_best.get(backward_q[0][3], float("inf")) + 1e-9:
+            heapq.heappop(backward_q)
+        if not forward_q or not backward_q:
             break
-        for edge in graph["adj"].get(u, ()):
-            v = edge["to"]
-            nd = distance + edge["dist"]
-            if nd < best.get(v, float("inf")) - 1e-9:
-                best[v] = nd
-                parent[v] = u
+
+        if forward_q[0][0] + backward_q[0][0] >= best_total - 1e-9:
+            break
+
+        expand_forward = forward_q[0][0] <= backward_q[0][0]
+        if expand_forward:
+            _, distance, _, u = heapq.heappop(forward_q)
+            if distance > forward_best.get(u, float("inf")) + 1e-9:
+                continue
+
+            if u in backward_best:
+                total = distance + backward_best[u]
+                if total < best_total:
+                    best_total, meet = total, u
+
+            for edge in graph["adj"].get(u, ()):
+                v = edge["to"]
+                nd = distance + float(edge.get("dist", 0.0))
+                if nd >= forward_best.get(v, float("inf")) - 1e-9:
+                    continue
+                forward_best[v] = nd
+                forward_parent[v] = u
                 sequence += 1
                 point = (graph["nodes"][v][0], graph["nodes"][v][1])
-                heuristic = haversine(point, goal_point)
-                heapq.heappush(q, (nd + heuristic, nd, sequence, v))
+                heapq.heappush(
+                    forward_q,
+                    (nd + haversine(point, goal_point), nd, sequence, v),
+                )
+        else:
+            _, distance, _, u = heapq.heappop(backward_q)
+            if distance > backward_best.get(u, float("inf")) + 1e-9:
+                continue
 
-    if goal not in best:
+            if u in forward_best:
+                total = distance + forward_best[u]
+                if total < best_total:
+                    best_total, meet = total, u
+
+            for edge in graph["adj"].get(u, ()):
+                v = edge["to"]
+                nd = distance + float(edge.get("dist", 0.0))
+                if nd >= backward_best.get(v, float("inf")) - 1e-9:
+                    continue
+                backward_best[v] = nd
+                backward_parent[v] = u
+                sequence += 1
+                point = (graph["nodes"][v][0], graph["nodes"][v][1])
+                heapq.heappush(
+                    backward_q,
+                    (nd + haversine(point, start_point), nd, sequence, v),
+                )
+
+    if meet is None:
         return None
-    ids = []
-    u = goal
+
+    left = []
+    u = meet
     while u is not None:
-        ids.append(u)
-        u = parent[u]
-    return list(reversed(ids)), best[goal]
+        left.append(u)
+        u = forward_parent[u]
+    left.reverse()
+
+    right = []
+    u = backward_parent.get(meet)
+    while u is not None:
+        right.append(u)
+        u = backward_parent[u]
+
+    return left + right, best_total
 
 
 def _find_edge(graph, a, b):
