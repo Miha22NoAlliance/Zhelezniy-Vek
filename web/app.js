@@ -234,6 +234,17 @@ async function buildRoute(){
     $('elevation').textContent=data.ascent_m.toFixed(0)+' м / '+data.descent_m.toFixed(0)+' м';
     $('stairs').textContent=data.stairs_count.toLocaleString('ru-RU');
     $('crossings').textContent=(data.crossings_count??0).toLocaleString('ru-RU');
+    const simpleMetrics=data.simple_metrics||{};
+    $('eta').textContent=data.mode==='simple_v2' && simpleMetrics.eta_minutes!=null
+      ? simpleMetrics.eta_minutes.toFixed(1)+' мин' : '—';
+    $('turns').textContent=data.mode==='simple_v2' && simpleMetrics.turns!=null
+      ? simpleMetrics.turns.toLocaleString('ru-RU') : '—';
+    $('sharpTurns').textContent=data.mode==='simple_v2' && simpleMetrics.sharp_turns!=null
+      ? simpleMetrics.sharp_turns.toLocaleString('ru-RU') : '—';
+    $('streetChanges').textContent=data.mode==='simple_v2' && simpleMetrics.street_changes!=null
+      ? simpleMetrics.street_changes.toLocaleString('ru-RU') : '—';
+    $('directness').textContent=data.mode==='simple_v2' && simpleMetrics.directness!=null
+      ? (simpleMetrics.directness*100).toFixed(0)+'%' : '—';
     $('criteria').innerHTML=Object.entries(data.criteria||{}).map(([key,value])=>
       '<div class="crit"><span class="name">'+(labels[key]||key)+'</span><span class="'+(value<0?'minus':'plus')+'">'+
       (value>=0?'+':'')+value.toFixed(1)+'</span></div>').join('');
