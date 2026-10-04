@@ -74,6 +74,10 @@ OpenStreetMap contributors. Данные распространяются на �
 
 ## Simple mode v2
 
-Отдельный городской режим использует поиск с состоянием предыдущего узла. Помимо длины ребра учитываются резкость поворота, сохранение класса улицы, уход с магистральной/жилой улицы на короткие служебные проходы, уклон и лестницы. Это эвристическая модель предпочтений, а не гарантированная навигационная рекомендация; доступность проходов определяется исходным OSM-графом.
+Simple v2 is a separate city-oriented routing mode. Its cost model considers route continuity, road hierarchy, turn severity, directness, crossings, traffic signals, major crossings, OSM access/barrier tags, elevation and stairs. The graph stores OSM way/name/ref metadata so a route can prefer staying on the same street instead of taking a short service/path detour.
 
-Режим v1 сохранён для сравнения. Simple v2 выбирается отдельно в интерфейсе и использует тот же лимит объезда и локальные данные.
+The shortest-distance baseline uses A* with the straight-line haversine distance as an admissible heuristic. Simple v2 uses a state-aware A* search whose state contains the previous and current graph nodes, allowing turn penalties without changing the public routing API.
+
+The result includes a heuristic walking-time estimate based on route length plus penalties for turns, crossings, signals, major crossings, stairs and ascent. It is an estimate, not live navigation ETA.
+
+Changing the graph schema forces local derived JSON to be rebuilt from the local PBF. Use /api/reload or remove data/lipetsk_graph.json and data/lipetsk_map.json.
