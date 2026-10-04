@@ -451,6 +451,8 @@ def _solve_for_budget(graph, start, goal, shortest_ids, shortest_m,
 
     # Автоматически перебираем несколько весов качества в пределах бюджета.
     if automatic:
+        if mode in {"simple", "simple_v2"}:
+            return min(candidates, key=lambda c: (c["simple_cost"], -c["score"], c["distance_m"]))
         if mode == "aggressive":
             return max(
                 candidates,
@@ -529,6 +531,8 @@ def find_route(graph, start_point, goal_point, detour_factor=1.35,
 
             if mode == "aggressive":
                 current_value = _aggressive_utility(candidate, shortest_m)
+            elif mode == "simple_v2":
+                current_value = -candidate["simple_cost"]
             else:
                 current_value = candidate["score"] / max(
                     candidate["distance_m"] / 1000.0, 0.001
