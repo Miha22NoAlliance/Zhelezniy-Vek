@@ -163,7 +163,8 @@ def _edge_cost(graph, previous, current, edge, goal, quality_weight):
     return dist * factor + turn_penalty + access_penalty + crossing_penalty
 
 
-def weighted_path(graph, start, goal, goal_point, quality_weight, max_distance=None):
+def weighted_path(graph, start, goal, goal_point, quality_weight, max_distance=None,
+                  progress_callback=None, progress_phase="weighted"):
     initial = (None, start)
     sequence = count()
     queue = [(0.0 + HEURISTIC_SCALE * _haversine(
@@ -174,6 +175,7 @@ def weighted_path(graph, start, goal, goal_point, quality_weight, max_distance=N
     parent = {initial: None}
     final = None
     expanded = 0
+    progress_batch = []
 
     while queue:
         f_score, distance, _, state = heapq.heappop(queue)
@@ -187,6 +189,11 @@ def weighted_path(graph, start, goal, goal_point, quality_weight, max_distance=N
 
         previous, current = state
         expanded += 1
+        if progress_callback is not None:
+            progress_batch.append(current)
+            if len(progress_batch) >= 64:
+                progress_callback(progress_phase, expanded, tuple(progress_batch), current, "forward")
+                progress_batch.clear()
         if current == goal:
             final = state
             break
@@ -209,6 +216,8 @@ def weighted_path(graph, start, goal, goal_point, quality_weight, max_distance=N
                 )
                 heapq.heappush(queue, (next_cost + heuristic, next_distance, next(sequence), next_state))
 
+    if progress_callback is not None and progress_batch:
+        progress_callback(progress_phase, expanded, tuple(progress_batch), current, "forward")
     if final is None:
         return None
     states = []
