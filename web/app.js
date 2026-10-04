@@ -202,9 +202,12 @@ $('autoDetour').addEventListener('change',updateDetourUi);
 updateDetourUi();
 $('routeMode').addEventListener('change',e=>{
   const simple=e.target.value==='simple';
-  $('status').textContent=simple
-    ? 'Упрощённый режим: прямее, крупнее улицы, меньше лестниц и подъёмов'
-    : e.target.value==='aggressive'
+  const simpleV2=e.target.value==='simple_v2';
+  $('status').textContent=simpleV2
+    ? 'Simple v2: меньше резких поворотов, приоритет непрерывных улиц и меньше дворовых срезов'
+    : simple
+      ? 'Упрощённый режим v1: прямее, крупнее улицы, меньше лестниц и подъёмов'
+      : e.target.value==='aggressive'
       ? 'Агрессивный качественный режим: сильнее тянется к паркам и хорошим улицам, избегает лишних петель и переходов'
       : 'Качественный режим: ищет более приятный путь';
 });
@@ -235,7 +238,8 @@ async function buildRoute(){
       '<div class="crit"><span class="name">'+(labels[key]||key)+'</span><span class="'+(value<0?'minus':'plus')+'">'+
       (value>=0?'+':'')+value.toFixed(1)+'</span></div>').join('');
     $('result').classList.remove('hidden');
-    const modeName=data.mode==='simple'?'Упрощённый маршрут':
+    const modeName=data.mode==='simple_v2'?'Simple v2 — городской маршрут':
+      data.mode==='simple'?'Упрощённый маршрут v1':
       data.mode==='aggressive'?'Качественный — агрессивный':'Качественный маршрут';
     const autoText=data.automatic
       ? data.mode==='aggressive'?' · автоматический агрессивный выбор':' · автоматический выбор по баллам/км'
