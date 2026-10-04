@@ -11,7 +11,7 @@ from routing import haversine
 
 LIPETSK_BBOX = (52.5320, 39.4596, 52.6457, 39.7153)
 PBF_FILENAME = "planet_39.4596,52.532_39.7153,52.6457.osm.pbf"
-GRAPH_SCHEMA = 8
+GRAPH_SCHEMA = 9
 EXCLUDE = {"motorway", "motorway_link", "construction", "proposed", "raceway"}
 GRID_LAT, GRID_LON = 0.01, 0.015
 
@@ -411,12 +411,18 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
             continue
         lat, lon = node_map[nid]
         tags = node_tags.get(nid, {})
-        if tags.get("highway") == "crossing" or tags.get("railway") == "level_crossing" or tags.get("highway") == "traffic_signals":
-            node_flags[str(nid)] = {
-                "crossing": tags.get("highway") == "crossing" or tags.get("railway") == "level_crossing",
-                "traffic_signals": tags.get("highway") == "traffic_signals",
-                "major_crossing": tags.get("crossing") == "major" or tags.get("crossing:road") == "major",
-            }
+        node_flags_value = {
+            "crossing": tags.get("highway") == "crossing" or tags.get("railway") == "level_crossing",
+            "traffic_signals": tags.get("highway") == "traffic_signals",
+            "major_crossing": tags.get("crossing") == "major" or tags.get("crossing:road") == "major",
+            "crossing_type": tags.get("crossing", ""),
+            "access": tags.get("access", ""),
+            "foot": tags.get("foot", ""),
+            "barrier": tags.get("barrier", ""),
+            "entrance": tags.get("entrance", ""),
+        }
+        if any(node_flags_value.values()):
+            node_flags[str(nid)] = node_flags_value
         ele = None
         raw_ele = tags.get("ele")
         if raw_ele is not None:
@@ -492,12 +498,26 @@ def build_or_load_graph(graph_path: Path, map_path: Path, pbf_path: Path):
                 "stairs": tags.get("highway") == "steps",
                 "elevation_delta_m": round(elevation_delta, 2) if elevation_delta is not None else None,
                 "incline_pct": round(incline, 2) if incline else None,
+                "way_id": wid,
+                "road_name": tags.get("name", ""),
+                "road_ref": tags.get("ref", ""),
+                "surface": tags.get("surface", ""),
+                "sidewalk": tags.get("sidewalk", ""),
+                "lanes": int(num(tags.get("lanes"), 0)),
+                "maxspeed": maxspeed,
             }
             reverse_meta = {
                 "highway": tags.get("highway", ""),
                 "stairs": tags.get("highway") == "steps",
                 "elevation_delta_m": round(-elevation_delta, 2) if elevation_delta is not None else None,
                 "incline_pct": round(-incline, 2) if incline else None,
+                "way_id": wid,
+                "road_name": tags.get("name", ""),
+                "road_ref": tags.get("ref", ""),
+                "surface": tags.get("surface", ""),
+                "sidewalk": tags.get("sidewalk", ""),
+                "lanes": int(num(tags.get("lanes"), 0)),
+                "maxspeed": maxspeed,
             }
             edge={"to":sb,"dist":dist,"score":score,"criteria":contrib,**edge_meta}
             reverse={"to":sa,"dist":dist,"score":score,"criteria":contrib,**reverse_meta}
