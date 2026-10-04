@@ -2,6 +2,7 @@ const canvas = document.getElementById('map');
 const ctx = canvas.getContext('2d');
 
 let start=null, goal=null, routeCoordinates=null, routeSegments=null, graphMeta=null, mapData=null;
+let searchState={active:false,phase:'',expanded:0,current:null,visited:[],since:0,jobId:null,pollTimer:null};
 let view={lat:52.58885,lon:39.58745,pixelsPerMeter:.8};
 let dragging=false,moved=false,downX=0,downY=0,panStart=null;
 const $=id=>document.getElementById(id);
@@ -108,6 +109,25 @@ function drawMarker(lat,lon,fill,letter){
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(letter,p.x,p.y+.5);
   ctx.textAlign='left';ctx.textBaseline='alphabetic';
 }
+function drawSearch(){
+  if(!searchState.active && !searchState.visited.length)return;
+  ctx.save();
+  for(const item of searchState.visited){
+    const p=project(item[0],item[1]);
+    if(p.x<-8||p.y<-8||p.x>canvas.clientWidth+8||p.y>canvas.clientHeight+8)continue;
+    ctx.fillStyle=item[2]==='backward'?'rgba(90,160,255,.24)':'rgba(255,173,31,.22)';
+    ctx.beginPath();ctx.arc(p.x,p.y,2.2,0,Math.PI*2);ctx.fill();
+  }
+  if(searchState.current){
+    const p=project(searchState.current[0],searchState.current[1]);
+    ctx.fillStyle='#fff';
+    ctx.strokeStyle=searchState.phase==='shortest'?'#62a7ff':'#ffad1f';
+    ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(p.x,p.y,5.5,0,Math.PI*2);ctx.fill();ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function draw(){
   const w=canvas.clientWidth,h=canvas.clientHeight;
   ctx.clearRect(0,0,w,h);ctx.fillStyle='#111418';ctx.fillRect(0,0,w,h);
@@ -127,6 +147,7 @@ function draw(){
   const order={path:1,track:1,footway:1,cycleway:1,steps:1,service:2,residential:3,living_street:3,
     pedestrian:3,tertiary:4,secondary:5,primary:6,trunk:7};
   for(const road of [...(mapData.roads||[])].sort((a,b)=>(order[a.class]||0)-(order[b.class]||0)))drawRoad(road.coords,road.class);
+  drawSearch();
   if(routeCoordinates?.length){
     let p=project(routeCoordinates[0][0],routeCoordinates[0][1]);
     ctx.beginPath();ctx.moveTo(p.x,p.y);
@@ -159,6 +180,7 @@ function draw(){
   ctx.fillStyle='#aaaeb4';ctx.font='12px Segoe UI,Arial,sans-serif';ctx.fillText('Локальная OSM-карта · offline',22,31);
 }
 function setPoint(lat,lon){
+  resetSearchState();
   if(!start)start=[lat,lon];
   else if(!goal)goal=[lat,lon];
   else{start=[lat,lon];goal=null;routeCoordinates=null;routeSegments=null;$('result').classList.add('hidden');}
@@ -166,6 +188,7 @@ function setPoint(lat,lon){
   $('status').textContent=start&&goal?'Готово к построению маршрута':'Теперь выберите финиш';draw();
 }
 function clearAll(){
+  resetSearchState();
   start=goal=null;routeCoordinates=null;routeSegments=null;$('result').classList.add('hidden');$('build').disabled=true;
   $('status').textContent=mapData?'Выберите старт и финиш на карте':'Загрузка локальной карты…';draw();
 }
@@ -213,57 +236,129 @@ $('routeMode').addEventListener('change',e=>{
 });
 $('clear').onclick=clearAll;$('build').onclick=buildRoute;window.addEventListener('resize',resize);
 
+function resetSearchState(){
+  if(searchState.pollTimer)clearTimeout(searchState.pollTimer);
+  searchState={active:false,phase:'',expanded:0,current:null,visited:[],since:0,jobId:null,pollTimer:null};
+  const panel=$('searchPanel');
+  if(panel)panel.classList.add('hidden');
+  const bar=$('searchProgress');
+  if(bar)bar.style.width='3%';
+}
+
+function updateSearchUi(){
+  $('searchPanel').classList.remove('hidden');
+  const phase=searchState.phase||'Поиск маршрута';
+  $('searchPhase').textContent=phase==='shortest'
+    ? 'Кратчайший путь · двунаправленный A*'
+    : phase.startsWith('candidate')
+      ? 'Кандидат · '+phase.replace('candidate · ','')
+      : phase==='snap' ? 'Привязка старта' : 'Поиск маршрута';
+  $('searchExpanded').textContent=searchState.expanded.toLocaleString('ru-RU')+' узлов';
+  $('searchHint').textContent='Точки на карте — реально раскрытые вершины алгоритма';
+  const progress=Math.min(96,4+Math.log10(Math.max(1,searchState.expanded))*18);
+  $('searchProgress').style.width=progress+'%';
+}
+
+async function pollRouteJob(){
+  if(!searchState.jobId)return;
+  try{
+    const r=await fetch('/api/route/progress?id='+encodeURIComponent(searchState.jobId)+'&since='+searchState.since,{cache:'no-store'});
+    const data=await r.json();
+    if(!r.ok)throw new Error(data.error||'Не удалось получить прогресс поиска');
+    for(const event of data.events||[]){
+      searchState.since=Math.max(searchState.since,event.seq||0);
+      searchState.phase=event.phase||searchState.phase;
+      searchState.expanded=Math.max(searchState.expanded,event.expanded||0);
+      for(const point of event.points||[])searchState.visited.push(point);
+    }
+    if(searchState.visited.length>9000)searchState.visited.splice(0,searchState.visited.length-9000);
+    searchState.current=data.current||searchState.current;
+    updateSearchUi();draw();
+    if(data.done){
+      searchState.active=false;
+      $('searchProgress').style.width='100%';
+      if(data.error)throw new Error(data.error);
+      applyRouteResult(data.result);
+      return;
+    }
+  }catch(e){
+    searchState.active=false;
+    $('searchPanel').classList.add('hidden');
+    $('status').textContent='Ошибка: '+e.message;
+    $('build').disabled=!(start&&goal&&mapData);
+    return;
+  }
+  searchState.pollTimer=setTimeout(pollRouteJob,120);
+}
+
+function applyRouteResult(data){
+  if(!data)throw new Error('Сервер не вернул результат маршрута');
+  routeCoordinates=data.coordinates;routeSegments=data.segments||[];draw();
+  const lats=data.coordinates.map(p=>p[0]),lons=data.coordinates.map(p=>p[1]);
+  fitBounds([Math.min(...lats),Math.min(...lons),Math.max(...lats),Math.max(...lons)],70);
+  $('distance').textContent=(data.distance_m/1000).toFixed(2)+' км';
+  $('score').textContent=data.score.toFixed(1);$('scoreKm').textContent=data.score_per_km.toFixed(1);
+  $('selectedDetour').textContent=(data.selected_detour_pct||Math.round($('detour').value))+'%';
+  $('limit').textContent=(data.max_distance_m/1000).toFixed(2)+' км';
+  $('elevation').textContent=data.ascent_m.toFixed(0)+' м / '+data.descent_m.toFixed(0)+' м';
+  $('stairs').textContent=data.stairs_count.toLocaleString('ru-RU');
+  $('crossings').textContent=(data.crossings_count??0).toLocaleString('ru-RU');
+  const simpleMetrics=data.simple_metrics||{};
+  $('eta').textContent=data.mode==='simple_v2' && simpleMetrics.eta_minutes!=null
+    ? simpleMetrics.eta_minutes.toFixed(1)+' мин' : '—';
+  $('turns').textContent=data.mode==='simple_v2' && simpleMetrics.turns!=null
+    ? simpleMetrics.turns.toLocaleString('ru-RU') : '—';
+  $('sharpTurns').textContent=data.mode==='simple_v2' && simpleMetrics.sharp_turns!=null
+    ? simpleMetrics.sharp_turns.toLocaleString('ru-RU') : '—';
+  $('streetChanges').textContent=data.mode==='simple_v2' && simpleMetrics.street_changes!=null
+    ? simpleMetrics.street_changes.toLocaleString('ru-RU') : '—';
+  $('directness').textContent=data.mode==='simple_v2' && simpleMetrics.directness!=null
+    ? (simpleMetrics.directness*100).toFixed(0)+'%' : '—';
+  $('criteria').innerHTML=Object.entries(data.criteria||{}).map(([key,value])=>
+    '<div class="crit"><span class="name">'+(labels[key]||key)+'</span><span class="'+(value<0?'minus':'plus')+'">'+
+    (value>=0?'+':'')+value.toFixed(1)+'</span></div>').join('');
+  $('result').classList.remove('hidden');
+  const modeName=data.mode==='simple_v2'?'Simple v2 — городской маршрут':
+    data.mode==='simple'?'Упрощённый маршрут v1':
+    data.mode==='aggressive'?'Качественный — агрессивный':'Качественный маршрут';
+  const autoText=data.automatic
+    ? data.mode==='aggressive'?' · автоматический агрессивный выбор':' · автоматический выбор по баллам/км'
+    : '';
+  $('status').textContent=modeName+' построен'+autoText+
+    ' · объезд '+data.selected_detour_pct+'% · обработано узлов: '+
+    data.expanded_labels.toLocaleString('ru-RU');
+  $('searchHint').textContent='Поиск завершён · показаны реально обработанные вершины';
+  draw();
+}
+
 async function buildRoute(){
   if(!start||!goal||!mapData)return;
-  $('build').disabled=true;$('status').textContent='Ищу лучший маршрут по локальному графу…';
+  if(searchState.pollTimer)clearTimeout(searchState.pollTimer);
+  searchState={active:true,phase:'queued',expanded:0,current:null,visited:[],since:0,jobId:null,pollTimer:null};
+  routeCoordinates=null;routeSegments=null;$('result').classList.add('hidden');
+  $('build').disabled=true;$('status').textContent='Запускаю поиск маршрута…';updateSearchUi();draw();
   try{
     const params=new URLSearchParams({
       slat:start[0],slon:start[1],glat:goal[0],glon:goal[1],
       detour:$('detour').value/100,mode:$('routeMode').value,
       auto:$('autoDetour').checked?'1':'0'
     });
-    const r=await fetch('/api/route?'+params,{cache:'no-store'}),data=await r.json();
-    if(!r.ok)throw new Error(data.error||'Маршрут не найден');
-    routeCoordinates=data.coordinates;routeSegments=data.segments||[];draw();
-    const lats=data.coordinates.map(p=>p[0]),lons=data.coordinates.map(p=>p[1]);
-    fitBounds([Math.min(...lats),Math.min(...lons),Math.max(...lats),Math.max(...lons)],70);
-    $('distance').textContent=(data.distance_m/1000).toFixed(2)+' км';
-    $('score').textContent=data.score.toFixed(1);$('scoreKm').textContent=data.score_per_km.toFixed(1);
-    $('selectedDetour').textContent=(data.selected_detour_pct||Math.round($('detour').value))+'%';
-    $('limit').textContent=(data.max_distance_m/1000).toFixed(2)+' км';
-    $('elevation').textContent=data.ascent_m.toFixed(0)+' м / '+data.descent_m.toFixed(0)+' м';
-    $('stairs').textContent=data.stairs_count.toLocaleString('ru-RU');
-    $('crossings').textContent=(data.crossings_count??0).toLocaleString('ru-RU');
-    const simpleMetrics=data.simple_metrics||{};
-    $('eta').textContent=data.mode==='simple_v2' && simpleMetrics.eta_minutes!=null
-      ? simpleMetrics.eta_minutes.toFixed(1)+' мин' : '—';
-    $('turns').textContent=data.mode==='simple_v2' && simpleMetrics.turns!=null
-      ? simpleMetrics.turns.toLocaleString('ru-RU') : '—';
-    $('sharpTurns').textContent=data.mode==='simple_v2' && simpleMetrics.sharp_turns!=null
-      ? simpleMetrics.sharp_turns.toLocaleString('ru-RU') : '—';
-    $('streetChanges').textContent=data.mode==='simple_v2' && simpleMetrics.street_changes!=null
-      ? simpleMetrics.street_changes.toLocaleString('ru-RU') : '—';
-    $('directness').textContent=data.mode==='simple_v2' && simpleMetrics.directness!=null
-      ? (simpleMetrics.directness*100).toFixed(0)+'%' : '—';
-    $('criteria').innerHTML=Object.entries(data.criteria||{}).map(([key,value])=>
-      '<div class="crit"><span class="name">'+(labels[key]||key)+'</span><span class="'+(value<0?'minus':'plus')+'">'+
-      (value>=0?'+':'')+value.toFixed(1)+'</span></div>').join('');
-    $('result').classList.remove('hidden');
-    const modeName=data.mode==='simple_v2'?'Simple v2 — городской маршрут':
-      data.mode==='simple'?'Упрощённый маршрут v1':
-      data.mode==='aggressive'?'Качественный — агрессивный':'Качественный маршрут';
-    const autoText=data.automatic
-      ? data.mode==='aggressive'?' · автоматический агрессивный выбор':' · автоматический выбор по баллам/км'
-      : '';
-    $('status').textContent=modeName+' построен'+autoText+
-      ' · объезд '+data.selected_detour_pct+'% · обработано узлов: '+
-      data.expanded_labels.toLocaleString('ru-RU');
-  }catch(e){$('status').textContent='Ошибка: '+e.message;}
-  finally{$('build').disabled=!(start&&goal&&mapData);}
+    const r=await fetch('/api/route/start?'+params,{cache:'no-store'}),data=await r.json();
+    if(!r.ok)throw new Error(data.error||'Не удалось запустить поиск');
+    searchState.jobId=data.job_id;
+    searchState.phase='starting';
+    updateSearchUi();draw();
+    pollRouteJob();
+  }catch(e){
+    searchState.active=false;
+    $('searchPanel').classList.add('hidden');
+    $('status').textContent='Ошибка: '+e.message;
+    $('build').disabled=!(start&&goal&&mapData);
+  }
 }
 
 async function init(){
-  resize();$('build').disabled=true;$('status').textContent='Загружаю локальный OSM PBF…';
+  resetSearchState();resize();$('build').disabled=true;$('status').textContent='Загружаю локальный OSM PBF…';
   try{
     const r=await fetch('/api/map',{cache:'no-store'}),data=await r.json();
     if(!r.ok)throw new Error(data.error||'Не удалось загрузить локальные данные');
